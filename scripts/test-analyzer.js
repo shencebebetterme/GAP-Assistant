@@ -201,4 +201,21 @@ assert.strictEqual(userCallDiagnostics[1].range.start.line, 15, "branch user cal
 const usesAfterBadCall = userFunctionCallAnalysis.scopes[0].symbols.get("uses");
 assert(!usesAfterBadCall.parameters[0].type.filters.includes("IsInt"), "bad call-site evidence should not pollute inferred parameter filters");
 
+const listMapperSample = [
+  "values := List([1 .. 4], i -> Factorial(i));",
+  "badValues := List([1 .. 4], i -> i + \"x\");",
+  ""
+].join("\n");
+const listMapperAnalysis = analyzer.analyze(listMapperSample, "memory://list-mapper.g");
+const values = listMapperAnalysis.scopes[0].symbols.get("values");
+assert(values && values.type.filters.includes("IsList"), "List mapper result should infer a list");
+assert(values.type.element && values.type.element.filters.includes("IsPosInt"), "List mapper should infer element type from arrow body");
+const mapperHover = listMapperAnalysis.hoverAt(0, 25);
+assert(mapperHover && mapperHover.symbol.name === "i", "hover inside List mapper should resolve the arrow parameter");
+assert(mapperHover.symbol.type.filters.includes("IsInt"), "List mapper parameter should use the input collection element type");
+const listDiagnostics = listMapperAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "operator-type");
+assert.strictEqual(listDiagnostics.length, 1, "invalid arithmetic inside a List mapper should be diagnosed");
+assert(listDiagnostics[0].message.includes("left operand is integer"), "List mapper diagnostic should use the arrow parameter type");
+assert.strictEqual(listDiagnostics[0].range.start.line, 1, "List mapper diagnostic should point at the mapper body line");
+
 console.log("Analyzer tests passed.");

@@ -37,6 +37,8 @@ Call checking uses GAP declaration filters where available. For example, `Genera
 
 The same compatibility check is applied to user-defined functions once their parameter filters have been inferred from the function body. For example, a function that calls `GeneratorsOfGroup(obj)` learns that `obj` should be group-like, and later calls with clearly incompatible arguments are reported without feeding that bad evidence back into the function contract.
 
+Common mapper calls are analyzed as well. In `List([1 .. 4], i -> Factorial(i))`, the arrow parameter `i` is treated as an integer from the range element type, the result is inferred as a list of positive integers, and mistakes inside the mapper body can produce diagnostics.
+
 Hover descriptions are hard-wrapped by default. Adjust `gapReference.hover.wrapColumn` in VS Code settings if you prefer wider or narrower documentation lines. Use `gapReference.hover.maxExamples` and `gapReference.hover.maxExampleLines` to control how many manual examples are shown.
 
 ## Regenerate Documentation Data

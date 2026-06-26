@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4
+
+- Added `List(collection, x -> expr)` mapper inference, including result element types from the arrow body.
+- Added arrow-parameter scopes for mapper hovers.
+- Used input collection element filters when checking mapper body expressions and diagnostics.
+
 ## 0.3.3
 
 - Added diagnostics for calls to user-defined functions when inferred parameter filters are clearly incompatible with the argument type.

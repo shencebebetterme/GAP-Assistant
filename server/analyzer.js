@@ -47,9 +47,9 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
   const globalScope = createScope("global", 0, text.length, undefined);
   globalScope.lineStarts = lineStarts;
   const diagnostics = [];
-  const data = { docs, declarations, diagnostics, lineStarts };
   const functions = [];
   const scopes = [globalScope];
+  const data = { docs, declarations, diagnostics, lineStarts, scopes };
   analyzeStatements(ast.statements, globalScope, data, functions, text, masked, lineStarts, scopes);
   refineFunctionParametersFromCallSites(text, masked, functions, globalScope, data);
 
@@ -1034,6 +1034,10 @@ function inferCall(name, args, scope, data, expressionOffset = 0, argumentSpans 
     reportCallArgumentDiagnostics(name, args, scope, data, expressionOffset, argumentSpans, documented);
   }
 
+  if (name === "List") {
+    return inferListCall(args, scope, data, expressionOffset, argumentSpans);
+  }
+
   if (hardCoded) {
     return addCallContext(hardCoded(), name, args, scope);
   }
@@ -1053,6 +1057,105 @@ function inferCall(name, args, scope, data, expressionOffset = 0, argumentSpans 
     confidence: "unknown",
     source: `${name}(...)`
   });
+}
+
+function inferListCall(args, scope, data, expressionOffset, argumentSpans) {
+  const collectionSpan = argumentSpans[0] || { start: 0 };
+  const collectionType = args[0]
+    ? inferExpression(args[0], scope, data, expressionOffset + collectionSpan.start)
+    : typeInfo("unknown collection", ["IsObject"], { confidence: "unknown" });
+  const collectionElement = collectionType && collectionType.element;
+  const baseElement = collectionElement || elementTypeFromCollection(collectionType);
+  const mapper = args[1] ? parseArrowFunctionExpression(args[1]) : undefined;
+
+  if (!mapper) {
+    return typeInfo("list", ["IsObject", "IsCollection", "IsList"], {
+      confidence: "function",
+      source: "List(...)",
+      element: baseElement,
+      arguments: callArguments(args, scope)
+    });
+  }
+
+  const mapperSpan = argumentSpans[1] || { start: 0, end: args[1].length };
+  const mapperScope = createScope("arrow function", expressionOffset + mapperSpan.start, expressionOffset + mapperSpan.end, scope);
+  mapperScope.lineStarts = data.lineStarts;
+  if (Array.isArray(data.scopes)) {
+    data.scopes.push(mapperScope);
+  }
+
+  mapper.params.forEach((param, index) => {
+    const paramType = index === 0
+      ? (baseElement || typeInfo("collection element", ["IsObject"], { confidence: "unknown" }))
+      : typeInfo("unknown parameter", ["IsObject"], { confidence: "unknown" });
+    mapperScope.symbols.set(param.name, {
+      name: param.name,
+      scope: "parameter",
+      range: rangeFromOffset(data.lineStarts, expressionOffset + mapperSpan.start + param.start),
+      type: paramType,
+      source: "List mapper parameter"
+    });
+  });
+
+  const bodyType = inferExpression(mapper.body, mapperScope, data, expressionOffset + mapperSpan.start + mapper.bodyStart);
+  return typeInfo("list", ["IsObject", "IsCollection", "IsList"], {
+    confidence: "List mapper",
+    source: "List(...)",
+    element: bodyType,
+    arguments: callArguments(args, scope)
+  });
+}
+
+function parseArrowFunctionExpression(expression) {
+  const found = findTopLevelOperator(expression, ["->"]);
+  if (!found) {
+    return undefined;
+  }
+
+  const paramsText = expression.slice(0, found.index).trim();
+  const bodyText = expression.slice(found.index + found.operator.length).trim();
+  if (!paramsText || !bodyText) {
+    return undefined;
+  }
+
+  const unwrappedParams = stripBalancedParens(paramsText);
+  const paramParts = splitCommaList(unwrappedParams);
+  const params = [];
+  for (const part of paramParts) {
+    const name = part.trim();
+    if (!IDENTIFIER_RE.test(name)) {
+      return undefined;
+    }
+    const start = expression.indexOf(name);
+    params.push({ name, start, end: start + name.length });
+  }
+
+  const rawBodyStart = found.index + found.operator.length;
+  return {
+    params,
+    body: bodyText,
+    bodyStart: rawBodyStart + leadingWhitespaceLength(expression.slice(rawBodyStart))
+  };
+}
+
+function elementTypeFromCollection(collectionType) {
+  if (!collectionType) {
+    return undefined;
+  }
+  if (hasAnyFilter(collectionType, ["IsString"])) {
+    return typeInfo("character", ["IsObject"], { confidence: "string element" });
+  }
+  if (hasAnyFilter(collectionType, ["IsList", "IsDenseList", "IsCollection"])) {
+    return typeInfo("collection element", ["IsObject"], { confidence: "collection" });
+  }
+  return undefined;
+}
+
+function callArguments(args, scope) {
+  return args.map((arg) => ({
+    expression: arg,
+    type: inferExpression(arg, scope, { docs: { entries: {}, names: [] }, declarations: { declarations: {}, names: [] } })
+  }));
 }
 
 function reportUserFunctionCallDiagnostics(name, args, scope, data, expressionOffset, argumentSpans, symbol) {
