@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const childProcess = require("child_process");
 const { getEntries, isIdentifier } = require("../src/docs");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -9,6 +10,8 @@ const REQUIRED_FILES = [
   "package.json",
   "language-configuration.json",
   "syntaxes/gap.tmLanguage.json",
+  "server/analyzer.js",
+  "server/lsp-server.js",
   "src/docs.js",
   "src/extension.js",
   "data/gap-docs.json"
@@ -50,6 +53,16 @@ function main() {
     }
     if (!Array.isArray(grammar.patterns) || !grammar.repository) {
       failures.push("GAP grammar must contain patterns and repository");
+    }
+  }
+
+  for (const file of ["server/analyzer.js", "server/lsp-server.js", "scripts/test-analyzer.js", "scripts/test-lsp-server.js"]) {
+    try {
+      childProcess.execFileSync(process.execPath, ["--check", path.join(ROOT, file)], {
+        stdio: "pipe"
+      });
+    } catch (error) {
+      failures.push(`${file} should pass node --check: ${error.message}`);
     }
   }
 

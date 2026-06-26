@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Added a standalone GAP analyzer and stdio language server prototype.
+- Added static inference hovers for globals, locals, function returns, and documented callables.
+- Represented inferred GAP values with filter sets instead of a single OO class-like type.
+- Added analyzer and LSP smoke tests.
+
 ## 0.1.2
 
 - Fixed local manual section links on Windows by opening through a browser redirect page that preserves anchors.

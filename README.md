@@ -9,6 +9,7 @@ Features:
 - Semantic highlighting for documented GAP reference symbols.
 - Hover documentation for GAP reference manual functions and operations generated from the local GAP 4.15.1 reference manual HTML files.
 - Structured hovers with section headings, styled inline code, grouped signatures, and GAP examples from the manual.
+- Static GAP inference hovers for globals, locals, functions, return values, and filter sets.
 - Hover links that open the configured local manual page.
 
 ## Use In VS Code
@@ -20,6 +21,8 @@ code --extensionDevelopmentPath "C:\Users\Ce\Documents\codex_playground\GAP_fron
 ```
 
 Open `examples/sample.g`, then hover names such as `SymmetricGroup`, `Size`, or `IsGroup`.
+
+Static inference is filter-centric. A GAP value is shown with every filter the analyzer can infer, for example `SymmetricGroup(4)` is a group object satisfying filters such as `IsGroup`, `IsPermGroup`, and `IsFinite`; this avoids pretending GAP has a single classical OO inheritance type.
 
 Hover descriptions are hard-wrapped by default. Adjust `gapReference.hover.wrapColumn` in VS Code settings if you prefer wider or narrower documentation lines. Use `gapReference.hover.maxExamples` and `gapReference.hover.maxExampleLines` to control how many manual examples are shown.
 
@@ -58,5 +61,15 @@ Hover links open the exact local manual section anchor, for example `chap39.html
 ```powershell
 npm run validate
 ```
+
+## Language Server Prototype
+
+The independent analyzer and minimal stdio language server live in `server/`.
+
+```powershell
+npm run language-server
+```
+
+The VS Code extension currently calls the analyzer directly for hover inference. The LSP wrapper exposes the same engine for future clients and currently supports initialization, document sync, and hover.
 
 The generated documentation snippets come from the installed GAP reference manual. Keep GAP documentation licensing in mind if you redistribute the extension.

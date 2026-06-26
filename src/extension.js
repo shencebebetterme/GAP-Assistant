@@ -5,6 +5,7 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 const vscode = require("vscode");
 const { getEntries, isIdentifier, loadDocumentation } = require("./docs");
+const { GapAnalyzer, formatInferenceMarkdown } = require("../server/analyzer");
 
 const GAP_SELECTOR = { language: "gap" };
 const IDENTIFIER_PATTERN = /[A-Za-z_][A-Za-z0-9_]*/;
@@ -19,8 +20,10 @@ function activate(context) {
     return;
   }
 
+  const analyzer = new GapAnalyzer(docs);
+
   context.subscriptions.push(
-    vscode.languages.registerHoverProvider(GAP_SELECTOR, new GapHoverProvider(docs)),
+    vscode.languages.registerHoverProvider(GAP_SELECTOR, new GapHoverProvider(docs, analyzer)),
     vscode.languages.registerDocumentSemanticTokensProvider(
       GAP_SELECTOR,
       new GapSemanticTokensProvider(docs),
@@ -33,8 +36,10 @@ function activate(context) {
 function deactivate() {}
 
 class GapHoverProvider {
-  constructor(docs) {
+  constructor(docs, analyzer) {
     this.docs = docs;
+    this.analyzer = analyzer;
+    this.analysisCache = new Map();
   }
 
   provideHover(document, position) {
@@ -45,7 +50,8 @@ class GapHoverProvider {
 
     const name = document.getText(range);
     const entries = getEntries(this.docs, name);
-    if (!entries || entries.length === 0) {
+    const inferenceHover = this.inferenceHover(document, position);
+    if ((!entries || entries.length === 0) && !inferenceHover) {
       return undefined;
     }
 
@@ -62,6 +68,13 @@ class GapHoverProvider {
     markdown.isTrusted = {
       enabledCommands: ["gapReference.openLocalManual"]
     };
+
+    if (inferenceHover) {
+      markdown.appendMarkdown(formatInferenceMarkdown(inferenceHover));
+      if (shownEntryGroups.length > 0) {
+        markdown.appendMarkdown("\n\n---\n\n");
+      }
+    }
 
     shownEntryGroups.forEach((group, index) => {
       const title = [group.entry.section, group.entry.title || group.entry.name].filter(Boolean).join(" ");
@@ -104,6 +117,17 @@ class GapHoverProvider {
     }
 
     return new vscode.Hover(markdown, range);
+  }
+
+  inferenceHover(document, position) {
+    const key = `${document.uri.toString()}@${document.version}`;
+    let analysis = this.analysisCache.get(key);
+    if (!analysis) {
+      analysis = this.analyzer.analyze(document.getText(), document.uri.toString());
+      this.analysisCache.clear();
+      this.analysisCache.set(key, analysis);
+    }
+    return analysis.hoverAt(position.line, position.character);
   }
 }
 

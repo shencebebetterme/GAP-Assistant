@@ -2,7 +2,7 @@
   "name": "gap-reference-assistant",
   "displayName": "GAP Reference Assistant",
   "description": "Syntax highlighting, documented symbol highlighting, and hover reference text for GAP.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "publisher": "local-gap",
   "license": "GPL-2.0-or-later",
   "repository": {
@@ -120,7 +120,9 @@
   },
   "scripts": {
     "extract-docs": "node scripts/extract-gap-docs.js",
-    "validate": "node scripts/validate-extension.js",
+    "language-server": "node server/lsp-server.js",
+    "test": "node scripts/test-analyzer.js && node scripts/test-lsp-server.js",
+    "validate": "node scripts/validate-extension.js && npm test",
     "vscode:prepublish": "npm run validate"
   }
 }
