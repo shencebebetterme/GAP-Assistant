@@ -113,6 +113,11 @@ function analyzeStatements(statements, scope, data, functions, text, masked, lin
       continue;
     }
 
+    if (statement.type === "expressionStatement") {
+      inferExpression(statement.expression.text, scope, data, statement.expression.start);
+      continue;
+    }
+
     if (statement.type === "ifStatement") {
       analyzeIfStatementNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
       continue;
@@ -217,6 +222,9 @@ function analyzeIfStatementNode(statement, parentScope, data, functions, text, m
     const scope = createBranchScope("if branch", branch.body || [], parentScope, lineStarts, branch.condition);
     branch.scope = scope;
     scopes.push(scope);
+    if (branch.condition && branch.condition.text) {
+      inferExpression(branch.condition.text, parentScope, data, branch.condition.start);
+    }
     applyPredicateRefinements(branch.condition && branch.condition.text, scope, data, branch.condition && branch.condition.start);
     analyzeStatements(branch.body || [], scope, data, functions, text, masked, lineStarts, scopes);
   }
@@ -766,7 +774,7 @@ function inferExpression(expression, scope, data, expressionOffset = 0) {
   }
   const call = parseCallExpression(expr);
   if (call) {
-    return inferCall(call.name, call.args, scope, data);
+    return inferCall(call.name, call.args, scope, data, expressionOffset, call.argumentSpans);
   }
 
   if (/^function\s*\(/.test(expr) || /->/.test(expr)) {
@@ -993,15 +1001,15 @@ function hasAnyFilter(type, filters) {
   return filters.some((filter) => typeFilters.has(filter));
 }
 
-function reportDiagnostic(data, offset, length, message) {
+function reportDiagnostic(data, offset, length, message, options = {}) {
   if (!data || !Array.isArray(data.diagnostics) || !Array.isArray(data.lineStarts)) {
     return;
   }
 
   data.diagnostics.push({
-    severity: 1,
+    severity: options.severity || 1,
     source: "gap-reference-assistant",
-    code: "operator-type",
+    code: options.code || "operator-type",
     message,
     range: {
       start: rangeFromOffset(data.lineStarts, offset),
@@ -1010,7 +1018,12 @@ function reportDiagnostic(data, offset, length, message) {
   });
 }
 
-function inferCall(name, args, scope, data) {
+function inferCall(name, args, scope, data, expressionOffset = 0, argumentSpans = []) {
+  const documented = documentedCallableInfo(name, data);
+  if (documented) {
+    reportCallArgumentDiagnostics(name, args, scope, data, expressionOffset, argumentSpans, documented);
+  }
+
   const hardCoded = HARD_CODED_CALLS[name];
   if (hardCoded) {
     return addCallContext(hardCoded(), name, args, scope);
@@ -1028,7 +1041,6 @@ function inferCall(name, args, scope, data) {
     return local.returnType;
   }
 
-  const documented = documentedCallableInfo(name, data);
   if (documented) {
     return documented.returnType || documented.type;
   }
@@ -1037,6 +1049,137 @@ function inferCall(name, args, scope, data) {
     confidence: "unknown",
     source: `${name}(...)`
   });
+}
+
+function reportCallArgumentDiagnostics(name, args, scope, data, expressionOffset, argumentSpans, callable) {
+  const parameterTypes = callable && callable.type && callable.type.parameterTypes;
+  if (!Array.isArray(parameterTypes) || parameterTypes.length === 0) {
+    return;
+  }
+
+  args.forEach((argument, index) => {
+    const expected = parameterTypes[index];
+    if (!expected || !expected.filters || expected.filters.length === 0) {
+      return;
+    }
+
+    const span = argumentSpans[index] || { text: argument, start: 0, end: argument.length };
+    const actual = inferExpression(argument, scope, data, expressionOffset + span.start);
+    if (!isClearlyIncompatibleWithExpectedFilters(actual, expected.filters)) {
+      return;
+    }
+
+    reportDiagnostic(
+      data,
+      expressionOffset + span.start,
+      Math.max(1, span.text.trim().length),
+      `${name} argument ${index + 1} may fail: expected ${formatFilterExpectation(expected.filters)}, got ${formatTypeLabel(actual)}.`,
+      { code: "call-argument-filter", severity: 2 }
+    );
+  });
+}
+
+function isClearlyIncompatibleWithExpectedFilters(actual, expectedFilters) {
+  if (!actual || actual.confidence === "unknown" || !Array.isArray(actual.filters) || actual.filters.length === 0) {
+    return false;
+  }
+
+  const actualFilters = expandedFilters(actual.filters);
+  if (expectedFilters.some((filter) => actualFilters.has(filter))) {
+    return false;
+  }
+
+  const expectedFamilies = new Set(expectedFilters.map(filterFamily).filter(Boolean));
+  if (expectedFamilies.size === 0) {
+    return false;
+  }
+
+  const actualFamilies = new Set([...actualFilters].map(filterFamily).filter(Boolean));
+  for (const family of expectedFamilies) {
+    if (actualFamilies.has(family)) {
+      return false;
+    }
+  }
+
+  return hasAnyConcreteFamily(actualFamilies);
+}
+
+function expandedFilters(filters) {
+  const expanded = new Set(filters || []);
+
+  if (expanded.has("IsPermGroup")) {
+    expanded.add("IsGroup");
+    expanded.add("IsMagmaWithInverses");
+    expanded.add("IsCollection");
+    expanded.add("IsListOrCollection");
+  }
+  if (expanded.has("IsGroup")) {
+    expanded.add("IsMagmaWithInverses");
+    expanded.add("IsMagma");
+    expanded.add("IsCollection");
+    expanded.add("IsListOrCollection");
+  }
+  if (expanded.has("IsMagmaWithInverses")) {
+    expanded.add("IsMagma");
+    expanded.add("IsCollection");
+  }
+  if (expanded.has("IsString")) {
+    expanded.add("IsList");
+    expanded.add("IsListOrCollection");
+  }
+  if (expanded.has("IsList") || expanded.has("IsDenseList")) {
+    expanded.add("IsListOrCollection");
+  }
+  if (expanded.has("IsCollection")) {
+    expanded.add("IsListOrCollection");
+  }
+  if (expanded.has("IsPosInt") || expanded.has("IsNonnegativeInt")) {
+    expanded.add("IsInt");
+  }
+  if (expanded.has("IsInt")) {
+    expanded.add("IsRat");
+  }
+
+  return expanded;
+}
+
+function filterFamily(filter) {
+  if (["IsInt", "IsPosInt", "IsNonnegativeInt", "IsRat", "IsFloat", "IsCyc", "IsCyclotomic"].includes(filter)) {
+    return "number";
+  }
+  if (["IsBool"].includes(filter)) {
+    return "boolean";
+  }
+  if (["IsString"].includes(filter)) {
+    return "string";
+  }
+  if (["IsList", "IsDenseList", "IsListOrCollection"].includes(filter)) {
+    return "list-or-collection";
+  }
+  if (["IsCollection"].includes(filter)) {
+    return "list-or-collection";
+  }
+  if (["IsGroup", "IsPermGroup", "IsMagma", "IsMagmaWithInverses"].includes(filter)) {
+    return "magma";
+  }
+  if (["IsPerm"].includes(filter)) {
+    return "permutation";
+  }
+  if (["IsRecord"].includes(filter)) {
+    return "record";
+  }
+  if (["IsFunction"].includes(filter)) {
+    return "function";
+  }
+  return undefined;
+}
+
+function hasAnyConcreteFamily(families) {
+  return families.size > 0 && !families.has(undefined);
+}
+
+function formatFilterExpectation(filters) {
+  return filters.map((filter) => `\`${filter}\``).join(", ");
 }
 
 function addCallContext(type, name, args, scope) {
@@ -1185,9 +1328,21 @@ function parseCallExpression(expr) {
     return undefined;
   }
 
+  const openIndex = expr.indexOf("(");
+  const spans = splitTopLevelWithSpans(match[2], ",").map((span) => {
+    const leading = leadingWhitespaceLength(span.text);
+    const trailing = span.text.length - span.text.trimEnd().length;
+    return {
+      text: span.text.trim(),
+      start: openIndex + 1 + span.start + leading,
+      end: openIndex + 1 + span.end - trailing
+    };
+  }).filter((span) => span.text);
+
   return {
     name: match[1],
-    args: splitTopLevel(match[2], ",")
+    args: spans.map((span) => span.text),
+    argumentSpans: spans
   };
 }
 
@@ -1469,13 +1624,19 @@ function splitCommaList(text) {
 }
 
 function splitTopLevel(text, delimiter) {
+  return splitTopLevelWithSpans(text, delimiter).map((span) => span.text);
+}
+
+function splitTopLevelWithSpans(text, delimiter) {
   const parts = [];
   let current = "";
+  let partStart = 0;
   let depth = 0;
   let inString = false;
   let escaped = false;
 
-  for (const char of text) {
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
     if (inString) {
       current += char;
       if (escaped) {
@@ -1500,15 +1661,16 @@ function splitTopLevel(text, delimiter) {
     }
 
     if (char === delimiter && depth === 0) {
-      parts.push(current);
+      parts.push({ text: current, start: partStart, end: index });
       current = "";
+      partStart = index + 1;
     } else {
       current += char;
     }
   }
 
   if (current || text.endsWith(delimiter)) {
-    parts.push(current);
+    parts.push({ text: current, start: partStart, end: text.length });
   }
   return parts;
 }

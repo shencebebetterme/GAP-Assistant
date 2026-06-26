@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Added declaration-filter call diagnostics for clearly incompatible GAP operation arguments.
+- Started checking standalone expression statements so unassigned calls can produce diagnostics.
+- Kept call diagnostics flow-aware, so guarded calls use branch-refined filters.
+
 ## 0.3.1
 
 - Added branch-sensitive filter flow for simple positive GAP predicates such as `IsString(obj)` and `IsGroup(G)`.

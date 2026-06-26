@@ -142,4 +142,29 @@ const branchHover = flowAnalysis.hoverAt(2, 17);
 assert(branchHover && branchHover.symbol.name === "obj", "hover inside a branch should resolve the parameter");
 assert(branchHover.symbol.type.filters.includes("IsString"), "branch hover should include the predicate filter");
 
+const callDiagnosticSample = [
+  "n := 5;",
+  "GeneratorsOfGroup(n);",
+  "",
+  "checker := function(obj)",
+  "    if IsGroup(obj) then",
+  "        return GeneratorsOfGroup(obj);",
+  "    fi;",
+  "    if IsString(obj) then",
+  "        return GeneratorsOfGroup(obj);",
+  "    fi;",
+  "    return [];",
+  "end;",
+  ""
+].join("\n");
+const callDiagnosticAnalysis = analyzer.analyze(callDiagnosticSample, "memory://calls.g");
+const callDiagnostics = callDiagnosticAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "call-argument-filter");
+assert.strictEqual(callDiagnostics.length, 2, "clearly incompatible declaration-filter calls should be diagnosed");
+assert(callDiagnostics[0].message.includes("GeneratorsOfGroup argument 1 may fail"), "call diagnostic should identify the callable");
+assert(callDiagnostics[0].message.includes("expected `IsMagmaWithInverses`"), "call diagnostic should include expected GAP filters");
+assert(callDiagnostics[0].message.includes("got integer"), "direct call diagnostic should use the inferred argument type");
+assert.strictEqual(callDiagnostics[0].range.start.line, 1, "direct call diagnostic should point at the bad call line");
+assert(callDiagnostics[1].message.includes("got string"), "branch call diagnostic should use the branch-refined type");
+assert.strictEqual(callDiagnostics[1].range.start.line, 8, "branch call diagnostic should point at the guarded bad call line");
+
 console.log("Analyzer tests passed.");

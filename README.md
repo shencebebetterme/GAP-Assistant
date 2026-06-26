@@ -33,6 +33,8 @@ Operator inference currently covers common arithmetic, comparison, and boolean f
 
 The analyzer also performs limited branch-sensitive filter flow. Inside a guarded block such as `if IsString(obj) then`, hovers, return inference, and operator diagnostics use `IsString` as evidence for `obj` in that branch.
 
+Call checking uses GAP declaration filters where available. For example, `GeneratorsOfGroup(5);` is reported because `GeneratorsOfGroup` resolves to a declaration requiring `IsMagmaWithInverses`, while a call guarded by `if IsGroup(obj) then` is treated as compatible in that branch.
+
 Hover descriptions are hard-wrapped by default. Adjust `gapReference.hover.wrapColumn` in VS Code settings if you prefer wider or narrower documentation lines. Use `gapReference.hover.maxExamples` and `gapReference.hover.maxExampleLines` to control how many manual examples are shown.
 
 ## Regenerate Documentation Data
