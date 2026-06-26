@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.7
+
+- Added fallthrough filter flow for terminating negative guard clauses such as `if not IsString(obj) then return fail; fi;`.
+- Used post-guard flow for hovers, diagnostics, and returns after the guard.
+
 ## 0.3.6
 
 - Added `while ... do` loop scopes with condition-derived predicate filters.

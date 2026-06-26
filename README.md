@@ -43,6 +43,8 @@ Loop variables also receive iterator element filters. In `for i in [1 .. 4] do`,
 
 Loop conditions can refine symbols too. Inside `while IsString(obj) do`, the analyzer treats `obj` as satisfying `IsString` for hovers, return inference, and diagnostics in the loop body.
 
+Terminating negative guards refine the following code path. After `if not IsString(obj) then return fail; fi;`, later statements in the same block treat `obj` as satisfying `IsString`.
+
 Hover descriptions are hard-wrapped by default. Adjust `gapReference.hover.wrapColumn` in VS Code settings if you prefer wider or narrower documentation lines. Use `gapReference.hover.maxExamples` and `gapReference.hover.maxExampleLines` to control how many manual examples are shown.
 
 ## Regenerate Documentation Data

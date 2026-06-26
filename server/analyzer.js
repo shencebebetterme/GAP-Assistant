@@ -97,44 +97,49 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
 }
 
 function analyzeStatements(statements, scope, data, functions, text, masked, lineStarts, scopes) {
+  let activeScope = scope;
+
   for (const statement of statements) {
+    statement.analysisScope = activeScope;
+
     if (statement.type === "localDeclaration") {
-      analyzeLocalDeclarationNode(statement, scope, lineStarts);
+      analyzeLocalDeclarationNode(statement, activeScope, lineStarts);
       continue;
     }
 
     if (statement.type === "functionAssignment") {
-      analyzeFunctionAssignmentNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
+      analyzeFunctionAssignmentNode(statement, activeScope, data, functions, text, masked, lineStarts, scopes);
       continue;
     }
 
     if (statement.type === "assignment") {
-      analyzeAssignmentNode(statement, scope, data, lineStarts);
+      analyzeAssignmentNode(statement, activeScope, data, lineStarts);
       continue;
     }
 
     if (statement.type === "expressionStatement") {
-      inferExpression(statement.expression.text, scope, data, statement.expression.start);
+      inferExpression(statement.expression.text, activeScope, data, statement.expression.start);
       continue;
     }
 
     if (statement.type === "ifStatement") {
-      analyzeIfStatementNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
+      analyzeIfStatementNode(statement, activeScope, data, functions, text, masked, lineStarts, scopes);
+      activeScope = guardFallthroughScope(statement, activeScope, data, lineStarts, scopes) || activeScope;
       continue;
     }
 
     if (statement.type === "forStatement") {
-      analyzeForStatementNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
+      analyzeForStatementNode(statement, activeScope, data, functions, text, masked, lineStarts, scopes);
       continue;
     }
 
     if (statement.type === "whileStatement") {
-      analyzeWhileStatementNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
+      analyzeWhileStatementNode(statement, activeScope, data, functions, text, masked, lineStarts, scopes);
       continue;
     }
 
     for (const nestedStatements of nestedStatementLists(statement)) {
-      analyzeStatements(nestedStatements, scope, data, functions, text, masked, lineStarts, scopes);
+      analyzeStatements(nestedStatements, activeScope, data, functions, text, masked, lineStarts, scopes);
     }
   }
 }
@@ -247,6 +252,65 @@ function analyzeIfStatementNode(statement, parentScope, data, functions, text, m
   }
 }
 
+function guardFallthroughScope(statement, parentScope, data, lineStarts, scopes) {
+  const refinements = guardFallthroughRefinements(statement, data);
+  if (refinements.length === 0) {
+    return undefined;
+  }
+
+  const scope = createScope("guarded flow", statement.end, parentScope.end, parentScope);
+  scope.lineStarts = lineStarts;
+  scope.guard = statement.branches[0].condition && statement.branches[0].condition.text;
+  applyRefinementsToScope(refinements, scope, statement.end);
+  statement.fallthroughScope = scope;
+  scopes.push(scope);
+  return scope;
+}
+
+function guardFallthroughRefinements(statement, data) {
+  if (
+    !statement ||
+    statement.type !== "ifStatement" ||
+    !Array.isArray(statement.branches) ||
+    statement.branches.length !== 1 ||
+    (statement.elseBody && statement.elseBody.length > 0)
+  ) {
+    return [];
+  }
+
+  const branch = statement.branches[0];
+  if (!statementsTerminate(branch.body || [])) {
+    return [];
+  }
+
+  return negatedPredicateRefinements(branch.condition && branch.condition.text, data);
+}
+
+function statementsTerminate(statements) {
+  if (!Array.isArray(statements) || statements.length === 0) {
+    return false;
+  }
+  return statementTerminates(statements[statements.length - 1]);
+}
+
+function statementTerminates(statement) {
+  if (!statement) {
+    return false;
+  }
+  if (statement.type === "returnStatement") {
+    return true;
+  }
+  if (statement.type === "ifStatement") {
+    return Boolean(
+      statement.elseBody &&
+      statement.elseBody.length > 0 &&
+      (statement.branches || []).every((branch) => statementsTerminate(branch.body || [])) &&
+      statementsTerminate(statement.elseBody)
+    );
+  }
+  return false;
+}
+
 function analyzeForStatementNode(statement, parentScope, data, functions, text, masked, lineStarts, scopes) {
   const iteratorType = statement.iterator
     ? inferExpression(statement.iterator.text, parentScope, data, statement.iterator.start)
@@ -322,20 +386,43 @@ function createBranchScope(kind, statements, parentScope, lineStarts, condition)
 }
 
 function applyPredicateRefinements(conditionText, scope, data, conditionOffset = 0) {
-  for (const refinement of predicateRefinements(conditionText, data)) {
+  applyRefinementsToScope(predicateRefinements(conditionText, data), scope, conditionOffset);
+}
+
+function applyRefinementsToScope(refinements, scope, offset = 0) {
+  for (const refinement of refinements) {
     const existing = lookupSymbol(scope.parent, refinement.name);
     const symbol = existing
       ? cloneSymbolForScope(existing)
       : {
           name: refinement.name,
           scope: scope.parent && scope.parent.kind === "global" ? "global" : "local",
-          range: rangeFromOffset(scope.lineStarts, conditionOffset),
+          range: rangeFromOffset(scope.lineStarts, offset),
           type: typeInfo("unknown GAP object", ["IsObject"], { confidence: "unknown" }),
           source: "predicate"
         };
     refineSymbolWithFlowFilters(symbol, refinement.filters, refinement.source);
     scope.symbols.set(refinement.name, symbol);
   }
+}
+
+function negatedPredicateRefinements(conditionText, data) {
+  const expression = stripBalancedParens((conditionText || "").trim());
+  if (!/^not\b/.test(expression)) {
+    return [];
+  }
+
+  const rawRest = expression.replace(/^not\b/, "").trim();
+  if (!rawRest) {
+    return [];
+  }
+
+  const parenthesized = rawRest.startsWith("(") && rawRest.endsWith(")") && enclosesWholeExpression(rawRest);
+  if (!parenthesized && (splitLogicalAnd(rawRest).length > 1 || splitByTopLevelWordOperator(rawRest, "or").length > 1)) {
+    return [];
+  }
+
+  return predicateRefinements(stripBalancedParens(rawRest), data);
 }
 
 function predicateRefinements(conditionText, data) {
@@ -544,26 +631,27 @@ function inferReturnTypeFromStatements(statements, scope, data) {
 
   for (const statement of statements) {
     let inferred;
+    const statementScope = statement.analysisScope || scope;
     if (statement.type === "returnStatement") {
       const expression = statement.expression;
       inferred = expression
-        ? inferExpression(expression.text, scope, data, expression.start)
+        ? inferExpression(expression.text, statementScope, data, expression.start)
         : typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
     } else if (statement.type === "ifStatement") {
-      inferred = inferIfReturnType(statement, scope, data);
+      inferred = inferIfReturnType(statement, statementScope, data);
     } else if (statement.type === "forStatement") {
-      const nested = inferReturnTypeFromStatements(statement.body || [], statement.scope || scope, data);
+      const nested = inferReturnTypeFromStatements(statement.body || [], statement.scope || statementScope, data);
       if (nested.label !== "no return value") {
         inferred = nested;
       }
     } else if (statement.type === "whileStatement") {
-      const nested = inferReturnTypeFromStatements(statement.body || [], statement.scope || scope, data);
+      const nested = inferReturnTypeFromStatements(statement.body || [], statement.scope || statementScope, data);
       if (nested.label !== "no return value") {
         inferred = nested;
       }
     } else {
       for (const nestedStatements of nestedStatementLists(statement)) {
-        const nested = inferReturnTypeFromStatements(nestedStatements, scope, data);
+        const nested = inferReturnTypeFromStatements(nestedStatements, statementScope, data);
         if (nested.label !== "no return value") {
           inferred = inferred ? mergeTypeInfo(inferred, nested) : nested;
         }

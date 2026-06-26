@@ -273,4 +273,25 @@ assert(whileHover.symbol.type.filters.includes("IsString"), "while-loop hover sh
 const whileFlow = whileLoopAnalysis.scopes[0].symbols.get("whileFlow");
 assert(whileFlow && whileFlow.returnType.filters.includes("IsString"), "return inside a while loop should use condition flow");
 
+const guardFlowSample = [
+  "guardFlow := function(obj)",
+  "    if not IsString(obj) then",
+  "        return fail;",
+  "    fi;",
+  "    bad := obj + 1;",
+  "    return obj;",
+  "end;",
+  ""
+].join("\n");
+const guardFlowAnalysis = analyzer.analyze(guardFlowSample, "memory://guard-flow.g");
+const guardDiagnostics = guardFlowAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "operator-type");
+assert.strictEqual(guardDiagnostics.length, 1, "post-guard invalid arithmetic should be diagnosed");
+assert(guardDiagnostics[0].message.includes("left operand is string"), "post-guard diagnostic should use fallthrough predicate filters");
+assert.strictEqual(guardDiagnostics[0].range.start.line, 4, "post-guard diagnostic should point after the guard");
+const guardHover = guardFlowAnalysis.hoverAt(4, 12);
+assert(guardHover && guardHover.symbol.name === "obj", "hover after a guard should resolve the guarded symbol");
+assert(guardHover.symbol.type.filters.includes("IsString"), "hover after a guard should include fallthrough predicate filters");
+const guardFlow = guardFlowAnalysis.scopes[0].symbols.get("guardFlow");
+assert(guardFlow && guardFlow.returnType.filters.includes("IsString"), "return after a guard should use fallthrough flow");
+
 console.log("Analyzer tests passed.");
