@@ -128,6 +128,11 @@ function analyzeStatements(statements, scope, data, functions, text, masked, lin
       continue;
     }
 
+    if (statement.type === "whileStatement") {
+      analyzeWhileStatementNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
+      continue;
+    }
+
     for (const nestedStatements of nestedStatementLists(statement)) {
       analyzeStatements(nestedStatements, scope, data, functions, text, masked, lineStarts, scopes);
     }
@@ -254,6 +259,18 @@ function analyzeForStatementNode(statement, parentScope, data, functions, text, 
   analyzeStatements(statement.body || [], loopScope, data, functions, text, masked, lineStarts, scopes);
 }
 
+function analyzeWhileStatementNode(statement, parentScope, data, functions, text, masked, lineStarts, scopes) {
+  if (statement.condition && statement.condition.text) {
+    inferExpression(statement.condition.text, parentScope, data, statement.condition.start);
+  }
+
+  const scope = createPredicateLoopScope("while loop", statement, parentScope, lineStarts);
+  statement.scope = scope;
+  scopes.push(scope);
+  applyPredicateRefinements(statement.condition && statement.condition.text, scope, data, statement.condition && statement.condition.start);
+  analyzeStatements(statement.body || [], scope, data, functions, text, masked, lineStarts, scopes);
+}
+
 function createLoopScope(statement, parentScope, lineStarts) {
   const first = statement.body && statement.body[0];
   const last = statement.body && statement.body[statement.body.length - 1];
@@ -280,6 +297,16 @@ function bindLoopVariable(statement, loopScope, iteratorType, lineStarts) {
     type: elementType,
     source: statement.iterator ? `for ${statement.iterator.text}` : "for loop"
   });
+}
+
+function createPredicateLoopScope(kind, statement, parentScope, lineStarts) {
+  const first = statement.body && statement.body[0];
+  const last = statement.body && statement.body[statement.body.length - 1];
+  const fallbackStart = statement.condition ? statement.condition.end : statement.start;
+  const scope = createScope(kind, first ? first.start : fallbackStart, last ? last.end : fallbackStart, parentScope);
+  scope.lineStarts = lineStarts;
+  scope.condition = statement.condition && statement.condition.text;
+  return scope;
 }
 
 function createBranchScope(kind, statements, parentScope, lineStarts, condition) {
@@ -525,6 +552,11 @@ function inferReturnTypeFromStatements(statements, scope, data) {
     } else if (statement.type === "ifStatement") {
       inferred = inferIfReturnType(statement, scope, data);
     } else if (statement.type === "forStatement") {
+      const nested = inferReturnTypeFromStatements(statement.body || [], statement.scope || scope, data);
+      if (nested.label !== "no return value") {
+        inferred = nested;
+      }
+    } else if (statement.type === "whileStatement") {
       const nested = inferReturnTypeFromStatements(statement.body || [], statement.scope || scope, data);
       if (nested.label !== "no return value") {
         inferred = nested;

@@ -252,4 +252,25 @@ assert(
 const firstValue = forLoopAnalysis.scopes[0].symbols.get("firstValue");
 assert(firstValue && firstValue.returnType.filters.includes("IsInt"), "return inside a for loop should use loop-variable flow");
 
+const whileLoopSample = [
+  "whileFlow := function(obj)",
+  "    while IsString(obj) do",
+  "        bad := obj + 1;",
+  "        return obj;",
+  "    od;",
+  "    return [];",
+  "end;",
+  ""
+].join("\n");
+const whileLoopAnalysis = analyzer.analyze(whileLoopSample, "memory://while-loop.g");
+const whileDiagnostics = whileLoopAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "operator-type");
+assert.strictEqual(whileDiagnostics.length, 1, "invalid arithmetic inside a while loop should be diagnosed");
+assert(whileDiagnostics[0].message.includes("left operand is string"), "while-loop diagnostic should use condition-refined filters");
+assert.strictEqual(whileDiagnostics[0].range.start.line, 2, "while-loop diagnostic should point at the loop body line");
+const whileHover = whileLoopAnalysis.hoverAt(2, 17);
+assert(whileHover && whileHover.symbol.name === "obj", "hover inside a while loop should resolve the refined symbol");
+assert(whileHover.symbol.type.filters.includes("IsString"), "while-loop hover should include predicate filters");
+const whileFlow = whileLoopAnalysis.scopes[0].symbols.get("whileFlow");
+assert(whileFlow && whileFlow.returnType.filters.includes("IsString"), "return inside a while loop should use condition flow");
+
 console.log("Analyzer tests passed.");

@@ -41,6 +41,8 @@ Common mapper calls are analyzed as well. In `List([1 .. 4], i -> Factorial(i))`
 
 Loop variables also receive iterator element filters. In `for i in [1 .. 4] do`, `i` is treated as an integer inside the loop body; in `for g in GeneratorsOfGroup(G) do`, `g` inherits the generator element filters.
 
+Loop conditions can refine symbols too. Inside `while IsString(obj) do`, the analyzer treats `obj` as satisfying `IsString` for hovers, return inference, and diagnostics in the loop body.
+
 Hover descriptions are hard-wrapped by default. Adjust `gapReference.hover.wrapColumn` in VS Code settings if you prefer wider or narrower documentation lines. Use `gapReference.hover.maxExamples` and `gapReference.hover.maxExampleLines` to control how many manual examples are shown.
 
 ## Regenerate Documentation Data

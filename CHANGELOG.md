@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6
+
+- Added `while ... do` loop scopes with condition-derived predicate filters.
+- Used while-loop condition flow for hovers, diagnostics, and returns inside loop bodies.
+
 ## 0.3.5
 
 - Added `for ... in ... do` loop scopes with loop-variable filters inferred from the iterator element type.
