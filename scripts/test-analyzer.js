@@ -33,6 +33,8 @@ callResult := uses(SymmetricGroup(5));
 
 const analysis = analyzer.analyze(sample, "memory://sample.g");
 const globalScope = analysis.scopes[0];
+assert(analysis.ast && analysis.ast.type === "program", "analysis should expose the parsed GAP program");
+assert(analysis.ast.statements.some((statement) => statement.type === "functionAssignment"), "analysis AST should include function assignments");
 
 const G = globalScope.symbols.get("G");
 assert(G, "G should be a global symbol");

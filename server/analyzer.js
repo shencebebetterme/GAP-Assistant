@@ -1,5 +1,7 @@
 "use strict";
 
+const { parseGapSource } = require("./parser");
+
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const HARD_CODED_CALLS = {
@@ -41,19 +43,19 @@ class GapAnalyzer {
 function analyzeGapText(text, docs, uri = "", declarations = { declarations: {}, names: [] }) {
   const lineStarts = computeLineStarts(text);
   const masked = maskCommentsAndStrings(text);
+  const ast = parseGapSource(text);
   const globalScope = createScope("global", 0, text.length, undefined);
   globalScope.lineStarts = lineStarts;
   const diagnostics = [];
   const data = { docs, declarations, diagnostics, lineStarts };
-  const functions = parseFunctionAssignments(text, masked, lineStarts, globalScope, data);
-
-  const functionRanges = functions.map((fn) => [fn.start, fn.end]);
-  parseAssignments(text, masked, globalScope, data, functionRanges);
+  const functions = [];
+  analyzeStatements(ast.statements, globalScope, data, functions, text, masked, lineStarts);
   refineFunctionParametersFromCallSites(text, masked, functions, globalScope, data);
 
   const document = {
     uri,
     text,
+    ast,
     lineStarts,
     scopes: [globalScope, ...functions.map((fn) => fn.scope)],
     functions,
@@ -91,6 +93,156 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
   };
 
   return document;
+}
+
+function analyzeStatements(statements, scope, data, functions, text, masked, lineStarts) {
+  for (const statement of statements) {
+    if (statement.type === "localDeclaration") {
+      analyzeLocalDeclarationNode(statement, scope, lineStarts);
+      continue;
+    }
+
+    if (statement.type === "functionAssignment") {
+      analyzeFunctionAssignmentNode(statement, scope, data, functions, text, masked, lineStarts);
+      continue;
+    }
+
+    if (statement.type === "assignment") {
+      analyzeAssignmentNode(statement, scope, data, lineStarts);
+      continue;
+    }
+
+    for (const nestedStatements of nestedStatementLists(statement)) {
+      analyzeStatements(nestedStatements, scope, data, functions, text, masked, lineStarts);
+    }
+  }
+}
+
+function analyzeLocalDeclarationNode(statement, scope, lineStarts) {
+  for (const name of statement.names || []) {
+    if (!IDENTIFIER_RE.test(name.name)) {
+      continue;
+    }
+    scope.symbols.set(name.name, {
+      name: name.name,
+      scope: "local",
+      range: rangeFromOffset(lineStarts, name.start),
+      type: typeInfo("unknown local", ["IsObject"], { confidence: "unknown" }),
+      source: "local declaration"
+    });
+  }
+}
+
+function analyzeAssignmentNode(statement, scope, data, lineStarts) {
+  if (!IDENTIFIER_RE.test(statement.name)) {
+    return;
+  }
+
+  const expression = statement.expression || { text: "", start: statement.assignStart + 2 };
+  const inferred = inferExpression(expression.text, scope, data, expression.start);
+  scope.symbols.set(statement.name, {
+    name: statement.name,
+    scope: scope.kind === "global" ? "global" : "local",
+    range: rangeFromOffset(lineStarts, statement.nameStart),
+    type: inferred,
+    source: expression.text
+  });
+}
+
+function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, text, masked, lineStarts) {
+  if (!IDENTIFIER_RE.test(statement.name)) {
+    return;
+  }
+
+  const scope = createScope(`function ${statement.name}`, statement.start, statement.end, parentScope);
+  scope.lineStarts = lineStarts;
+  const paramSymbols = (statement.params || []).map((param) => ({
+    name: param.name,
+    scope: "parameter",
+    range: rangeFromOffset(lineStarts, param.start),
+    type: typeInfo("unknown parameter", ["IsObject"], { confidence: "unknown" }),
+    source: "function parameter"
+  }));
+
+  for (const paramSymbol of paramSymbols) {
+    if (IDENTIFIER_RE.test(paramSymbol.name)) {
+      scope.symbols.set(paramSymbol.name, paramSymbol);
+    }
+  }
+
+  analyzeStatements(statement.body || [], scope, data, functions, text, masked, lineStarts);
+  refineSymbolsFromCallArgumentFilters(
+    text.slice(statement.bodyStart, statement.bodyEnd),
+    masked.slice(statement.bodyStart, statement.bodyEnd),
+    scope,
+    data,
+    statement.bodyStart
+  );
+  const returnType = inferReturnTypeFromStatements(statement.body || [], scope, data);
+  const fnType = functionType(paramSymbols.map((parameter) => parameter.name), returnType, {
+    parameterTypes: paramSymbols.map((parameter) => parameter.type)
+  });
+
+  const functionSymbol = {
+    name: statement.name,
+    scope: parentScope.kind === "global" ? "global" : "local",
+    range: rangeFromOffset(lineStarts, statement.nameStart),
+    type: fnType,
+    source: "function definition",
+    parameters: paramSymbols,
+    returnType
+  };
+  parentScope.symbols.set(statement.name, functionSymbol);
+
+  functions.push({
+    name: statement.name,
+    start: statement.start,
+    end: statement.end,
+    scope,
+    symbol: functionSymbol,
+    parameters: paramSymbols,
+    returnType
+  });
+}
+
+function inferReturnTypeFromStatements(statements, scope, data) {
+  let returnType;
+  for (const statement of collectReturnStatements(statements)) {
+    const expression = statement.expression;
+    const inferred = expression
+      ? inferExpression(expression.text, scope, data, expression.start)
+      : typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
+    returnType = returnType ? mergeTypeInfo(returnType, inferred) : inferred;
+  }
+
+  return returnType || typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
+}
+
+function collectReturnStatements(statements) {
+  const returns = [];
+  for (const statement of statements) {
+    if (statement.type === "returnStatement") {
+      returns.push(statement);
+      continue;
+    }
+    for (const nestedStatements of nestedStatementLists(statement)) {
+      returns.push(...collectReturnStatements(nestedStatements));
+    }
+  }
+  return returns;
+}
+
+function nestedStatementLists(statement) {
+  if (statement.type === "ifStatement") {
+    return [
+      ...(statement.branches || []).map((branch) => branch.body || []),
+      statement.elseBody || []
+    ];
+  }
+  if (statement.type === "forStatement" || statement.type === "whileStatement" || statement.type === "repeatStatement") {
+    return [statement.body || []];
+  }
+  return [];
 }
 
 function parseFunctionAssignments(text, masked, lineStarts, globalScope, data) {

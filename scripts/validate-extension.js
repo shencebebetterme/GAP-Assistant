@@ -12,6 +12,7 @@ const REQUIRED_FILES = [
   "syntaxes/gap.tmLanguage.json",
   "data/gap-declarations.json",
   "server/analyzer.js",
+  "server/parser.js",
   "server/lsp-server.js",
   "src/docs.js",
   "src/extension.js",
@@ -61,8 +62,10 @@ function main() {
 
   for (const file of [
     "server/analyzer.js",
+    "server/parser.js",
     "server/lsp-server.js",
     "src/lspClient.js",
+    "scripts/test-parser.js",
     "scripts/test-analyzer.js",
     "scripts/test-extension-helpers.js",
     "scripts/test-lsp-server.js",

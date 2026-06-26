@@ -11,6 +11,7 @@ Features:
 - Structured hovers with section headings, styled inline code, grouped signatures, and GAP examples from the manual.
 - Static GAP inference hovers for globals, locals, functions, return values, input filters, and filter sets.
 - Local stdio GAP language server used by the extension for inference hovers.
+- Fault-tolerant parser-backed analysis for assignments, local declarations, user functions, returns, branches, and loop bodies.
 - Basic static diagnostics for likely runtime errors, including obvious invalid operator uses such as string-plus-integer arithmetic.
 - Hover links that open the configured local manual page.
 
@@ -77,5 +78,7 @@ npm run language-server
 ```
 
 The VS Code extension uses a lightweight local client in `src/lspClient.js` to request inference hovers from this server. The server currently supports initialization, full document sync, hover, and diagnostic publication; the extension still renders the manual documentation locally and falls back to the in-process analyzer if the server is unavailable.
+
+The parser layer in `server/parser.js` is modeled against the installed GAP reader/scanner sources noted in `server/GAP_SOURCE_NOTES.md`. It is intended as the base for deeper filter-flow and runtime-risk checks, not as a complete replacement for GAP's own parser.
 
 The generated documentation snippets come from the installed GAP reference manual. Keep GAP documentation licensing in mind if you redistribute the extension.

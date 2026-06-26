@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Added a GAP tokenizer and fault-tolerant parser layer modeled on GAP's `scanner.*` and `read.c` sources.
+- Routed static inference through parsed assignment, local declaration, function, return, branch, and loop statements instead of relying on top-level regex scans.
+- Exposed the parsed AST from analyzer results and added parser tests to the validation suite.
+
 ## 0.2.3
 
 - Added basic operator-aware inference for numeric arithmetic such as `n + 10`.
