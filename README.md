@@ -31,6 +31,14 @@ The checked-in hover data is generated from:
 C:\Programs\GAP-4.15.1\runtime\opt\gap-4.15.1\doc\ref
 ```
 
+For hover links, set `gapReference.gapInstallationPath` to your GAP installation directory, for example:
+
+```json
+"gapReference.gapInstallationPath": "C:\\Programs\\GAP-4.15.1\\runtime\\opt\\gap-4.15.1"
+```
+
+If your reference manual is not under `doc/ref` inside the installation directory, set `gapReference.manualPath` directly to the manual HTML directory.
+
 Regenerate it with:
 
 ```powershell
@@ -43,7 +51,7 @@ Or pass a different manual directory:
 node scripts/extract-gap-docs.js "C:\path\to\gap\doc\ref"
 ```
 
-If the manual moves after installation, update `gapReference.manualPath` in VS Code settings so hover links open the correct local HTML files.
+Hover links open the exact local manual section anchor, for example `chap39.html#X7B75879B8085120A`.
 
 ## Validate
 

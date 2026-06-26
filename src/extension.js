@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("path");
+const { pathToFileURL } = require("url");
 const vscode = require("vscode");
 const { getEntries, isIdentifier, loadDocumentation } = require("./docs");
 
@@ -365,17 +366,38 @@ async function openLocalManual(docs, target) {
   }
 
   const config = vscode.workspace.getConfiguration("gapReference");
-  const configuredPath = config.get("manualPath", "");
-  const manualPath = configuredPath || (docs.source && docs.source.manualPath);
+  const manualPath = resolveManualPath(config, docs);
   if (!manualPath) {
-    vscode.window.showWarningMessage("GAP Reference Assistant has no configured manual path.");
+    vscode.window.showWarningMessage("GAP Reference Assistant has no configured GAP installation or manual path.");
     return;
   }
 
-  const uri = vscode.Uri.file(path.join(manualPath, target.file)).with({
-    fragment: target.anchor || ""
-  });
+  const uri = manualSectionUri(path.join(manualPath, target.file), target.anchor);
   await vscode.env.openExternal(uri);
+}
+
+function resolveManualPath(config, docs) {
+  const manualPath = normalizeSettingPath(config.get("manualPath", ""));
+  if (manualPath) {
+    return manualPath;
+  }
+
+  const gapInstallationPath = normalizeSettingPath(config.get("gapInstallationPath", ""));
+  if (gapInstallationPath) {
+    return path.join(gapInstallationPath, "doc", "ref");
+  }
+
+  return docs.source && docs.source.manualPath;
+}
+
+function normalizeSettingPath(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function manualSectionUri(filePath, anchor) {
+  const url = pathToFileURL(filePath).toString();
+  const urlWithAnchor = anchor ? `${url}#${encodeURIComponent(anchor)}` : url;
+  return vscode.Uri.parse(urlWithAnchor);
 }
 
 function truncate(text, maxLength) {

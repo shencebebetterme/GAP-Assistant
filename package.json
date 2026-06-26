@@ -65,10 +65,15 @@
     "configuration": {
       "title": "GAP Reference Assistant",
       "properties": {
+        "gapReference.gapInstallationPath": {
+          "type": "string",
+          "default": "C:\\Programs\\GAP-4.15.1\\runtime\\opt\\gap-4.15.1",
+          "description": "Absolute path to the local GAP installation directory. The reference manual is expected under doc/ref inside this directory unless gapReference.manualPath is set."
+        },
         "gapReference.manualPath": {
           "type": "string",
-          "default": "C:\\Programs\\GAP-4.15.1\\runtime\\opt\\gap-4.15.1\\doc\\ref",
-          "description": "Absolute path to the GAP reference manual HTML directory. This is used by hover links."
+          "default": "",
+          "description": "Optional absolute path to the GAP reference manual HTML directory. Leave empty to use gapReference.gapInstallationPath + doc/ref."
         },
         "gapReference.hover.maxEntries": {
           "type": "number",
