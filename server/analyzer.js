@@ -22,13 +22,14 @@ const HARD_CODED_CALLS = {
 };
 
 class GapAnalyzer {
-  constructor(docs) {
+  constructor(docs, declarations) {
     this.docs = docs || { entries: {}, names: [] };
+    this.declarations = declarations || { declarations: {}, names: [] };
     this.docsNameSet = new Set(this.docs.names || []);
   }
 
   analyze(text, uri = "") {
-    return analyzeGapText(text, this.docs, uri);
+    return analyzeGapText(text, this.docs, uri, this.declarations);
   }
 
   hoverAt(text, line, character, uri = "") {
@@ -37,14 +38,15 @@ class GapAnalyzer {
   }
 }
 
-function analyzeGapText(text, docs, uri = "") {
+function analyzeGapText(text, docs, uri = "", declarations = { declarations: {}, names: [] }) {
   const lineStarts = computeLineStarts(text);
   const masked = maskCommentsAndStrings(text);
   const globalScope = createScope("global", 0, text.length, undefined);
-  const functions = parseFunctionAssignments(text, masked, lineStarts, globalScope, docs);
+  const data = { docs, declarations };
+  const functions = parseFunctionAssignments(text, masked, lineStarts, globalScope, data);
 
   const functionRanges = functions.map((fn) => [fn.start, fn.end]);
-  parseAssignments(text, masked, globalScope, docs, functionRanges);
+  parseAssignments(text, masked, globalScope, data, functionRanges);
 
   const document = {
     uri,
@@ -70,7 +72,7 @@ function analyzeGapText(text, docs, uri = "") {
         };
       }
 
-      const documented = documentedCallableInfo(word.text, docs);
+      const documented = documentedCallableInfo(word.text, data);
       if (documented) {
         return {
           kind: "documented",
@@ -87,7 +89,7 @@ function analyzeGapText(text, docs, uri = "") {
   return document;
 }
 
-function parseFunctionAssignments(text, masked, lineStarts, globalScope, docs) {
+function parseFunctionAssignments(text, masked, lineStarts, globalScope, data) {
   const functions = [];
   const regex = /\b([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*function\s*\(([^)]*)\)/g;
   let match;
@@ -116,8 +118,8 @@ function parseFunctionAssignments(text, masked, lineStarts, globalScope, docs) {
     }
 
     parseLocalDeclarations(body, bodyStart, lineStarts, scope);
-    parseAssignments(text.slice(bodyStart, end), masked.slice(bodyStart, end), scope, docs, [], bodyStart);
-    const returnType = inferReturnType(body, bodyStart, scope, docs);
+    parseAssignments(text.slice(bodyStart, end), masked.slice(bodyStart, end), scope, data, [], bodyStart);
+    const returnType = inferReturnType(body, bodyStart, scope, data);
     const fnType = functionType(params, returnType);
 
     const functionSymbol = {
@@ -144,7 +146,7 @@ function parseFunctionAssignments(text, masked, lineStarts, globalScope, docs) {
   return functions;
 }
 
-function parseAssignments(text, masked, scope, docs, excludedRanges = [], baseOffset = 0) {
+function parseAssignments(text, masked, scope, data, excludedRanges = [], baseOffset = 0) {
   const regex = /\b([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([^;]+);/g;
   let match;
 
@@ -160,7 +162,7 @@ function parseAssignments(text, masked, scope, docs, excludedRanges = [], baseOf
       continue;
     }
 
-    const inferred = inferExpression(rawExpression, scope, docs);
+    const inferred = inferExpression(rawExpression, scope, data);
     scope.symbols.set(name, {
       name,
       scope: scope.kind === "global" ? "global" : "local",
@@ -191,20 +193,20 @@ function parseLocalDeclarations(body, bodyOffset, lineStarts, scope) {
   }
 }
 
-function inferReturnType(body, bodyOffset, scope, docs) {
+function inferReturnType(body, bodyOffset, scope, data) {
   const regex = /\breturn\s+([^;]+);/g;
   let returnType;
   let match;
 
   while ((match = regex.exec(maskCommentsAndStrings(body))) !== null) {
     const expression = body.slice(match.index + match[0].indexOf(match[1]), match.index + match[0].length - 1).trim();
-    returnType = returnType ? mergeTypeInfo(returnType, inferExpression(expression, scope, docs)) : inferExpression(expression, scope, docs);
+    returnType = returnType ? mergeTypeInfo(returnType, inferExpression(expression, scope, data)) : inferExpression(expression, scope, data);
   }
 
   return returnType || typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
 }
 
-function inferExpression(expression, scope, docs) {
+function inferExpression(expression, scope, data) {
   const expr = expression.trim();
   if (!expr) {
     return typeInfo("unknown", ["IsObject"], { confidence: "unknown" });
@@ -226,7 +228,7 @@ function inferExpression(expression, scope, docs) {
     return typeInfo("string", ["IsObject", "IsString", "IsList"], { confidence: "literal" });
   }
   if (/^\[.*\]$/.test(expr)) {
-    const element = inferListElementType(expr, scope, docs);
+    const element = inferListElementType(expr, scope, data);
     return typeInfo("list", ["IsObject", "IsCollection", "IsList"], { confidence: "literal", element });
   }
   if (/^rec\s*\(/.test(expr)) {
@@ -237,7 +239,7 @@ function inferExpression(expression, scope, docs) {
   }
   const call = parseCallExpression(expr);
   if (call) {
-    return inferCall(call.name, call.args, scope, docs);
+    return inferCall(call.name, call.args, scope, data);
   }
 
   if (/^function\s*\(/.test(expr) || /->/.test(expr)) {
@@ -250,7 +252,7 @@ function inferExpression(expression, scope, docs) {
   }
 
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(expr)) {
-    const documented = documentedCallableInfo(expr, docs);
+    const documented = documentedCallableInfo(expr, data);
     if (documented) {
       return documented.type;
     }
@@ -259,7 +261,7 @@ function inferExpression(expression, scope, docs) {
   return typeInfo("unknown GAP object", ["IsObject"], { confidence: "unknown" });
 }
 
-function inferListElementType(expr, scope, docs) {
+function inferListElementType(expr, scope, data) {
   const inside = expr.slice(1, -1).trim();
   if (!inside) {
     return undefined;
@@ -273,10 +275,10 @@ function inferListElementType(expr, scope, docs) {
     return undefined;
   }
 
-  return parts.map((part) => inferExpression(part, scope, docs)).reduce(mergeTypeInfo);
+  return parts.map((part) => inferExpression(part, scope, data)).reduce(mergeTypeInfo);
 }
 
-function inferCall(name, args, scope, docs) {
+function inferCall(name, args, scope, data) {
   const hardCoded = HARD_CODED_CALLS[name];
   if (hardCoded) {
     return addCallContext(hardCoded(), name, args, scope);
@@ -294,7 +296,7 @@ function inferCall(name, args, scope, docs) {
     return local.returnType;
   }
 
-  const documented = documentedCallableInfo(name, docs);
+  const documented = documentedCallableInfo(name, data);
   if (documented) {
     return documented.returnType || documented.type;
   }
@@ -310,15 +312,18 @@ function addCallContext(type, name, args, scope) {
   enriched.source = `${name}(...)`;
   enriched.arguments = args.map((arg) => ({
     expression: arg,
-    type: inferExpression(arg, scope, { entries: {}, names: [] })
+    type: inferExpression(arg, scope, { docs: { entries: {}, names: [] }, declarations: { declarations: {}, names: [] } })
   }));
   return enriched;
 }
 
-function documentedCallableInfo(name, docs) {
+function documentedCallableInfo(name, data) {
+  const docs = data.docs || data;
   const entries = docs && docs.entries && docs.entries[name];
+  const declarations = data.declarations || { declarations: {}, names: [] };
+  const declarationInfo = declarationCallableInfo(name, declarations);
   if (!entries || entries.length === 0) {
-    return undefined;
+    return declarationInfo;
   }
 
   const entry = entries[0];
@@ -329,12 +334,78 @@ function documentedCallableInfo(name, docs) {
     type: functionType(signatureParameters(entry.signature), returnType, {
       label: `${entry.kind || "documented"} ${name}`,
       signatures: entries.map((candidate) => candidate.signature).filter(Boolean),
-      documentation: returnSummary(entry)
+      documentation: returnSummary(entry),
+      parameterTypes: declarationInfo && declarationInfo.type && declarationInfo.type.parameterTypes,
+      declarations: declarationInfo && declarationInfo.type && declarationInfo.type.declarations
     }),
     returnType,
     source: "GAP reference manual",
     documentation: returnSummary(entry)
   };
+}
+
+function declarationCallableInfo(name, declarations) {
+  const resolved = resolveDeclarations(name, declarations);
+  if (resolved.length === 0) {
+    return undefined;
+  }
+
+  const primary = resolved.find((declaration) => Array.isArray(declaration.argumentFilters)) || resolved[0];
+  const returnType = returnTypeFromDeclaration(primary);
+  const parameterTypes = normalizeArgumentFilterGroups(primary.argumentFilters).map((filters, index) =>
+    typeInfo(`argument ${index + 1}`, filters, { confidence: "GAP declaration" })
+  );
+
+  return {
+    name,
+    scope: "declared global",
+    type: functionType(parameterTypes.map((_, index) => `arg${index + 1}`), returnType, {
+      label: `${primary.kind || "declared"} ${name}`,
+      confidence: "GAP declaration",
+      parameterTypes,
+      declarations: resolved
+    }),
+    returnType,
+    source: "GAP library declarations"
+  };
+}
+
+function normalizeArgumentFilterGroups(argumentFilters) {
+  if (!Array.isArray(argumentFilters)) {
+    return [];
+  }
+  if (argumentFilters.every((filter) => typeof filter === "string")) {
+    return [argumentFilters];
+  }
+  return argumentFilters.map((filters) => Array.isArray(filters) ? filters : [filters]).filter((filters) => filters.length > 0);
+}
+
+function resolveDeclarations(name, declarations, seen = new Set()) {
+  if (!declarations || !declarations.declarations || seen.has(name)) {
+    return [];
+  }
+  seen.add(name);
+
+  const direct = declarations.declarations[name] || [];
+  const resolved = [...direct];
+  for (const declaration of direct) {
+    if (declaration.target) {
+      resolved.push(...resolveDeclarations(declaration.target, declarations, seen));
+    }
+  }
+
+  return resolved;
+}
+
+function returnTypeFromDeclaration(declaration) {
+  const kind = declaration.kind || "declared";
+  if (kind === "property" || kind === "category" || kind === "filter") {
+    return typeInfo("boolean", ["IsObject", "IsBool"], { confidence: "GAP declaration kind" });
+  }
+  if (kind === "global function" || kind === "operation" || kind === "attribute" || kind === "constructor") {
+    return typeInfo("GAP object", ["IsObject"], { confidence: "GAP declaration" });
+  }
+  return typeInfo("GAP object", ["IsObject"], { confidence: "GAP declaration" });
 }
 
 function inferReturnFromEntry(entry) {
@@ -402,7 +473,9 @@ function functionType(parameters, returnType, options = {}) {
     parameters,
     returnType,
     signatures: options.signatures,
-    documentation: options.documentation
+    documentation: options.documentation,
+    parameterTypes: options.parameterTypes,
+    declarations: options.declarations
   });
 }
 
@@ -416,6 +489,8 @@ function typeInfo(label, filters = [], options = {}) {
     returnType: options.returnType,
     signatures: options.signatures || [],
     documentation: options.documentation,
+    parameterTypes: options.parameterTypes || [],
+    declarations: options.declarations || [],
     confidence: options.confidence || "inferred",
     source: options.source
   };
@@ -492,6 +567,22 @@ function formatInferenceMarkdown(hover) {
     lines.push("");
   } else if (type && type.parameters && type.parameters.length > 0) {
     lines.push(`Inputs: ${type.parameters.map((param) => `\`${param}\``).join(", ")}`, "");
+  }
+
+  if (type && type.parameterTypes && type.parameterTypes.length > 0) {
+    lines.push("Input filters:");
+    type.parameterTypes.forEach((parameterType, index) => {
+      const filters = parameterType.filters && parameterType.filters.length > 0
+        ? parameterType.filters.map((filter) => `\`${filter}\``).join(", ")
+        : "`IsObject`";
+      lines.push(`- arg${index + 1}: ${filters}`);
+    });
+    lines.push("");
+  }
+
+  if (type && type.declarations && type.declarations.length > 0) {
+    const declaration = type.declarations[0];
+    lines.push(`Declaration: \`${declaration.callee}\` in \`${declaration.file}:${declaration.line}\``, "");
   }
 
   if (symbol.source) {

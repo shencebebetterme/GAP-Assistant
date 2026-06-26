@@ -3,11 +3,12 @@
 const assert = require("assert");
 const path = require("path");
 const { GapAnalyzer } = require("../server/analyzer");
-const { loadDocumentation } = require("../src/docs");
+const { loadDeclarations, loadDocumentation } = require("../src/docs");
 
 const root = path.resolve(__dirname, "..");
 const docs = loadDocumentation(root);
-const analyzer = new GapAnalyzer(docs);
+const declarations = loadDeclarations(root);
+const analyzer = new GapAnalyzer(docs, declarations);
 
 const sample = `# static inference sample
 G := SymmetricGroup(4);
@@ -48,5 +49,12 @@ assert(hoverG && hoverG.symbol.name === "G", "hover at G should resolve global s
 
 const hoverBuiltin = analyzer.hoverAt("GeneratorsOfGroup(G);", 0, 3);
 assert(hoverBuiltin && hoverBuiltin.symbol.returnType.filters.includes("IsList"), "documented GeneratorsOfGroup should return list");
+assert(
+  hoverBuiltin.symbol.type.parameterTypes[0].filters.includes("IsMagmaWithInverses"),
+  "GeneratorsOfGroup should resolve synonym declaration input filters"
+);
+
+const hoverSize = analyzer.hoverAt("Size(G);", 0, 1);
+assert(hoverSize.symbol.type.parameterTypes[0].filters.includes("IsListOrCollection"), "Size should expose declaration input filters");
 
 console.log("Analyzer tests passed.");

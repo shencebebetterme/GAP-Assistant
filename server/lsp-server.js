@@ -5,8 +5,10 @@ const path = require("path");
 const { GapAnalyzer, formatInferenceMarkdown } = require("./analyzer");
 
 const docsPath = path.join(__dirname, "..", "data", "gap-docs.json");
+const declarationsPath = path.join(__dirname, "..", "data", "gap-declarations.json");
 const docs = JSON.parse(fs.readFileSync(docsPath, "utf8"));
-const analyzer = new GapAnalyzer(docs);
+const declarations = JSON.parse(fs.readFileSync(declarationsPath, "utf8"));
+const analyzer = new GapAnalyzer(docs, declarations);
 const documents = new Map();
 
 let buffer = Buffer.alloc(0);

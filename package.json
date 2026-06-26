@@ -119,6 +119,7 @@
     }
   },
   "scripts": {
+    "extract-declarations": "node scripts/extract-gap-declarations.js",
     "extract-docs": "node scripts/extract-gap-docs.js",
     "language-server": "node server/lsp-server.js",
     "test": "node scripts/test-analyzer.js && node scripts/test-lsp-server.js",

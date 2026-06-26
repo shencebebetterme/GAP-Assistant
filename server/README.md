@@ -19,6 +19,9 @@ Current static inference covers:
   `GroupWithGenerators`, `GeneratorsOfGroup`, `Size`, `Length`, and `List`
 - documentation-derived callable signatures and return hints from
   `data/gap-docs.json`
+- GAP library declaration filters from `data/gap-declarations.json`, including
+  declaration synonyms such as `GeneratorsOfGroup` mapping to the underlying
+  `GeneratorsOfMagmaWithInverses` attribute
 
 Run the stdio server with:
 

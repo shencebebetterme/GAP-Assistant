@@ -90,7 +90,7 @@ async function main() {
         uri: "memory://sample.g",
         languageId: "gap",
         version: 1,
-        text: "G := SymmetricGroup(4);\n"
+        text: "G := SymmetricGroup(4);\nSize(G);\n"
       }
     }
   });
@@ -112,6 +112,24 @@ async function main() {
   const hover = await waitForResponse(2);
   assert(hover.result.contents.value.includes("Static GAP inference"), "hover should include static inference");
   assert(hover.result.contents.value.includes("IsPermGroup"), "hover should include inferred GAP filters");
+
+  send({
+    id: 4,
+    method: "textDocument/hover",
+    params: {
+      textDocument: {
+        uri: "memory://sample.g"
+      },
+      position: {
+        line: 1,
+        character: 1
+      }
+    }
+  });
+
+  const sizeHover = await waitForResponse(4);
+  assert(sizeHover.result.contents.value.includes("Input filters"), "hover should include declaration input filters");
+  assert(sizeHover.result.contents.value.includes("IsListOrCollection"), "hover should include Size input filter");
 
   send({ id: 3, method: "shutdown", params: null });
   await waitForResponse(3);

@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const vscode = require("vscode");
-const { getEntries, isIdentifier, loadDocumentation } = require("./docs");
+const { getEntries, isIdentifier, loadDeclarations, loadDocumentation } = require("./docs");
 const { GapAnalyzer, formatInferenceMarkdown } = require("../server/analyzer");
 
 const GAP_SELECTOR = { language: "gap" };
@@ -13,14 +13,16 @@ const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(["function"], []);
 
 function activate(context) {
   let docs;
+  let declarations;
   try {
     docs = loadDocumentation(context.extensionPath);
+    declarations = loadDeclarations(context.extensionPath);
   } catch (error) {
-    vscode.window.showWarningMessage(`GAP Reference Assistant could not load documentation data: ${error.message}`);
+    vscode.window.showWarningMessage(`GAP Reference Assistant could not load language data: ${error.message}`);
     return;
   }
 
-  const analyzer = new GapAnalyzer(docs);
+  const analyzer = new GapAnalyzer(docs, declarations);
 
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(GAP_SELECTOR, new GapHoverProvider(docs, analyzer)),

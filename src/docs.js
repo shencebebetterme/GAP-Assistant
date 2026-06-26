@@ -6,6 +6,7 @@ const path = require("path");
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 let cachedDocs;
+let cachedDeclarations;
 
 function loadDocumentation(extensionPath) {
   if (cachedDocs) {
@@ -22,6 +23,23 @@ function loadDocumentation(extensionPath) {
 
   cachedDocs = docs;
   return docs;
+}
+
+function loadDeclarations(extensionPath) {
+  if (cachedDeclarations) {
+    return cachedDeclarations;
+  }
+
+  const declarationsPath = path.join(extensionPath, "data", "gap-declarations.json");
+  const raw = fs.readFileSync(declarationsPath, "utf8");
+  const declarations = JSON.parse(raw);
+
+  if (!declarations || !declarations.declarations || !Array.isArray(declarations.names)) {
+    throw new Error(`${declarationsPath} is not a valid GAP declarations data file`);
+  }
+
+  cachedDeclarations = declarations;
+  return declarations;
 }
 
 function getEntries(docs, name) {
@@ -82,5 +100,6 @@ function isIdentifier(text) {
 module.exports = {
   getEntries,
   isIdentifier,
+  loadDeclarations,
   loadDocumentation
 };

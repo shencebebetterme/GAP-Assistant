@@ -10,6 +10,7 @@ const REQUIRED_FILES = [
   "package.json",
   "language-configuration.json",
   "syntaxes/gap.tmLanguage.json",
+  "data/gap-declarations.json",
   "server/analyzer.js",
   "server/lsp-server.js",
   "src/docs.js",
@@ -30,6 +31,7 @@ function main() {
   const languageConfiguration = readJson("language-configuration.json", failures);
   const grammar = readJson("syntaxes/gap.tmLanguage.json", failures);
   const docs = readJson("data/gap-docs.json", failures);
+  const declarations = readJson("data/gap-declarations.json", failures);
 
   if (packageJson) {
     if (packageJson.main !== "./src/extension.js") {
@@ -69,6 +71,9 @@ function main() {
   if (docs) {
     validateDocs(docs, failures);
   }
+  if (declarations) {
+    validateDeclarations(declarations, failures);
+  }
 
   if (failures.length > 0) {
     for (const failure of failures) {
@@ -80,6 +85,27 @@ function main() {
   console.log(`Validated GAP extension files.`);
   console.log(`Documentation names: ${docs.names.length}`);
   console.log(`Reference entries: ${Object.values(docs.entries).reduce((sum, entries) => sum + entries.length, 0)}`);
+}
+
+function validateDeclarations(declarations, failures) {
+  if (!declarations.declarations || typeof declarations.declarations !== "object") {
+    failures.push("data/gap-declarations.json must contain a declarations object");
+    return;
+  }
+  if (!Array.isArray(declarations.names) || declarations.names.length < 1000) {
+    failures.push("data/gap-declarations.json should contain at least 1000 declared GAP names");
+    return;
+  }
+
+  const size = declarations.declarations.Size && declarations.declarations.Size[0];
+  if (!size || !size.argumentFilters || !size.argumentFilters[0].includes("IsListOrCollection")) {
+    failures.push("Size declaration should include IsListOrCollection input filter");
+  }
+
+  const generators = declarations.declarations.GeneratorsOfGroup && declarations.declarations.GeneratorsOfGroup[0];
+  if (!generators || generators.target !== "GeneratorsOfMagmaWithInverses") {
+    failures.push("GeneratorsOfGroup declaration should preserve synonym target");
+  }
 }
 
 function validateDocs(docs, failures) {
