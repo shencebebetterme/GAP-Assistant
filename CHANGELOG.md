@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Added basic operator-aware inference for numeric arithmetic such as `n + 10`.
+- Added static diagnostics for likely operator runtime errors such as adding a string and an integer.
+- Published diagnostics from the stdio language server and surfaced them through the VS Code extension.
+
 ## 0.2.2
 
 - Fixed literal string inference for assignments and return expressions.

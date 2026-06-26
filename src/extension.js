@@ -25,6 +25,7 @@ function activate(context) {
   }
 
   const analyzer = new GapAnalyzer(docs, declarations);
+  const diagnosticCollection = vscode.languages.createDiagnosticCollection("gap");
   const languageServerClient = new GapLanguageServerClient(path.join(context.extensionPath, "server", "lsp-server.js"), {
     cwd: context.extensionPath,
     timeoutMs: 1000
@@ -33,6 +34,7 @@ function activate(context) {
   languageServerClient.ensureStarted().catch(() => {});
 
   context.subscriptions.push(
+    diagnosticCollection,
     { dispose: () => languageServerClient.dispose() },
     vscode.languages.registerHoverProvider(GAP_SELECTOR, new GapHoverProvider(docs, analyzer, languageServerClient)),
     vscode.languages.registerDocumentSemanticTokensProvider(
@@ -40,12 +42,52 @@ function activate(context) {
       new GapSemanticTokensProvider(docs),
       SEMANTIC_LEGEND
     ),
+    vscode.workspace.onDidOpenTextDocument((document) => updateGapDiagnostics(document, analyzer, diagnosticCollection)),
+    vscode.workspace.onDidChangeTextDocument((event) => updateGapDiagnostics(event.document, analyzer, diagnosticCollection)),
+    vscode.workspace.onDidCloseTextDocument((document) => diagnosticCollection.delete(document.uri)),
     vscode.commands.registerCommand("gapReference.openLocalManual", (target) => openLocalManual(context, docs, target))
   );
+
+  for (const document of vscode.workspace.textDocuments || []) {
+    updateGapDiagnostics(document, analyzer, diagnosticCollection);
+  }
 }
 
 function deactivate() {
   return activeLanguageServerClient ? activeLanguageServerClient.dispose() : undefined;
+}
+
+function updateGapDiagnostics(document, analyzer, collection) {
+  if (!document || document.languageId !== "gap") {
+    return;
+  }
+
+  const analysis = analyzer.analyze(document.getText(), document.uri.toString());
+  const diagnostics = analysis.diagnostics.map((diagnostic) => {
+    const range = new vscode.Range(
+      new vscode.Position(diagnostic.range.start.line, diagnostic.range.start.character),
+      new vscode.Position(diagnostic.range.end.line, diagnostic.range.end.character)
+    );
+    const item = new vscode.Diagnostic(range, diagnostic.message, diagnosticSeverity(diagnostic.severity));
+    item.source = diagnostic.source;
+    item.code = diagnostic.code;
+    return item;
+  });
+
+  collection.set(document.uri, diagnostics);
+}
+
+function diagnosticSeverity(severity) {
+  if (severity === 1) {
+    return vscode.DiagnosticSeverity.Error;
+  }
+  if (severity === 2) {
+    return vscode.DiagnosticSeverity.Warning;
+  }
+  if (severity === 3) {
+    return vscode.DiagnosticSeverity.Information;
+  }
+  return vscode.DiagnosticSeverity.Hint;
 }
 
 class GapHoverProvider {

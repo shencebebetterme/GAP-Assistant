@@ -17,6 +17,8 @@ Current static inference covers:
 - call-site filter merging for user-defined function parameters
 - function return expressions
 - literals: integers, rationals, booleans, strings, lists, records, permutations
+- operator-aware inference for common arithmetic, comparison, and boolean forms
+- diagnostics for obvious operator/type mismatches such as string-plus-integer
 - common GAP constructors and operations such as `SymmetricGroup`,
   `GroupWithGenerators`, `GeneratorsOfGroup`, `Size`, `Length`, and `List`
 - documentation-derived callable signatures and return hints from
@@ -32,5 +34,6 @@ node server/lsp-server.js
 ```
 
 The VS Code extension uses `src/lspClient.js` to request inference hovers from
-this stdio server. Manual reference text is still rendered in the extension so
-local documentation links can use VS Code commands.
+this stdio server. The server also publishes diagnostics after document
+open/change notifications. Manual reference text is still rendered in the
+extension so local documentation links can use VS Code commands.

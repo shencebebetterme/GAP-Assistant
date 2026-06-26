@@ -53,7 +53,7 @@ function handleMessage(message) {
       },
       serverInfo: {
         name: "gap-reference-assistant-language-server",
-        version: "0.1.0"
+        version: "0.2.3"
       }
     });
     return;
@@ -72,6 +72,7 @@ function handleMessage(message) {
   if (message.method === "textDocument/didOpen") {
     const doc = message.params.textDocument;
     documents.set(doc.uri, doc.text || "");
+    publishDiagnostics(doc.uri, doc.text || "");
     return;
   }
 
@@ -80,6 +81,7 @@ function handleMessage(message) {
     const change = message.params.contentChanges[message.params.contentChanges.length - 1];
     if (change && typeof change.text === "string") {
       documents.set(uri, change.text);
+      publishDiagnostics(uri, change.text);
     }
     return;
   }
@@ -123,6 +125,18 @@ function respondError(id, code, message) {
     error: {
       code,
       message
+    }
+  });
+}
+
+function publishDiagnostics(uri, text) {
+  const analysis = analyzer.analyze(text, uri);
+  writeMessage({
+    jsonrpc: "2.0",
+    method: "textDocument/publishDiagnostics",
+    params: {
+      uri,
+      diagnostics: analysis.diagnostics
     }
   });
 }

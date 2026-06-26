@@ -27,6 +27,8 @@ async function main() {
   try {
     let text = [
       "G := SymmetricGroup(4);",
+      "n := 5;",
+      "m := n + 10;",
       "str := \"hello\";",
       "gens := GeneratorsOfGroup(G);",
       "f := function(n)",
@@ -46,17 +48,20 @@ async function main() {
     assert(groupHover.contents.value.includes("IsPermGroup"), "client hover should return server inference for variables");
     assert(!groupHover.contents.value.includes("Source:"), "client hover should not include internal source lines");
 
-    const stringHover = await client.hover(document, { line: 1, character: 1 });
+    const operatorHover = await client.hover(document, { line: 2, character: 1 });
+    assert(operatorHover.contents.value.includes("`integer`"), "client hover should infer integer arithmetic");
+
+    const stringHover = await client.hover(document, { line: 3, character: 1 });
     assert(stringHover.contents.value.includes("`string`"), "client hover should infer string assignments");
     assert(stringHover.contents.value.includes("IsString"), "client hover should include IsString");
 
-    const gensHover = await client.hover(document, { line: 2, character: 1 });
+    const gensHover = await client.hover(document, { line: 4, character: 1 });
     assert(gensHover.contents.value.includes("IsList"), "client hover should return server inference for globals");
 
-    const localHover = await client.hover(document, { line: 5, character: 6 });
+    const localHover = await client.hover(document, { line: 7, character: 6 });
     assert(localHover.contents.value.includes("IsList"), "client hover should return server inference for local variables");
 
-    const functionHover = await client.hover(document, { line: 8, character: 1 });
+    const functionHover = await client.hover(document, { line: 10, character: 1 });
     assert(functionHover.contents.value.includes("Input filters"), "client hover should return function input filters");
     assert(functionHover.contents.value.includes("IsListOrCollection"), "client hover should include body-derived filters");
     assert(functionHover.contents.value.includes("IsPermGroup"), "client hover should include call-site filters");

@@ -103,4 +103,21 @@ assert(stringMarkdown.includes("`string`"), "string hover should include terse t
 const hoverSize = analyzer.hoverAt("Size(G);", 0, 1);
 assert(hoverSize.symbol.type.parameterTypes[0].filters.includes("IsListOrCollection"), "Size should expose declaration input filters");
 
+const operatorSample = [
+  "n := 5;",
+  "m := n + 10;",
+  "a := \"hello\";",
+  "b := a + 2;",
+  ""
+].join("\n");
+const operatorAnalysis = analyzer.analyze(operatorSample, "memory://operators.g");
+const operatorScope = operatorAnalysis.scopes[0];
+const m = operatorScope.symbols.get("m");
+assert(m && m.type.filters.includes("IsInt"), "integer addition should infer an integer result");
+const b = operatorScope.symbols.get("b");
+assert(b && b.type.label === "unknown result of +", "invalid string arithmetic should not infer a numeric result");
+assert.strictEqual(operatorAnalysis.diagnostics.length, 1, "invalid string arithmetic should produce one diagnostic");
+assert(operatorAnalysis.diagnostics[0].message.includes("Operator + may fail"), "diagnostic should explain the operator risk");
+assert.strictEqual(operatorAnalysis.diagnostics[0].range.start.line, 3, "diagnostic should point at the invalid operator line");
+
 console.log("Analyzer tests passed.");

@@ -69,6 +69,22 @@ function waitForResponse(id, timeoutMs = 5000) {
   });
 }
 
+function waitForNotification(method, predicate = () => true, timeoutMs = 5000) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      const found = responses.find((response) => response.method === method && predicate(response.params || {}));
+      if (found) {
+        clearInterval(timer);
+        resolve(found);
+      } else if (Date.now() - started > timeoutMs) {
+        clearInterval(timer);
+        reject(new Error(`Timed out waiting for LSP notification ${method}`));
+      }
+    }, 20);
+  });
+}
+
 async function main() {
   send({
     id: 1,
@@ -98,11 +114,17 @@ async function main() {
           "    return Size(obj);",
           "end;",
           "uses(G);",
+          "bad := str + 2;",
           ""
         ].join("\n")
       }
     }
   });
+
+  const diagnostics = await waitForNotification("textDocument/publishDiagnostics", (params) => params.uri === "memory://sample.g");
+  assert.strictEqual(diagnostics.params.diagnostics.length, 1, "server should publish one operator diagnostic");
+  assert(diagnostics.params.diagnostics[0].message.includes("Operator + may fail"), "diagnostic should explain the operator risk");
+  assert.strictEqual(diagnostics.params.diagnostics[0].range.start.line, 7, "diagnostic should point at the invalid operator line");
 
   send({
     id: 2,
