@@ -49,7 +49,8 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
   const diagnostics = [];
   const data = { docs, declarations, diagnostics, lineStarts };
   const functions = [];
-  analyzeStatements(ast.statements, globalScope, data, functions, text, masked, lineStarts);
+  const scopes = [globalScope];
+  analyzeStatements(ast.statements, globalScope, data, functions, text, masked, lineStarts, scopes);
   refineFunctionParametersFromCallSites(text, masked, functions, globalScope, data);
 
   const document = {
@@ -57,7 +58,7 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
     text,
     ast,
     lineStarts,
-    scopes: [globalScope, ...functions.map((fn) => fn.scope)],
+    scopes,
     functions,
     diagnostics,
     hoverAt(line, character) {
@@ -95,7 +96,7 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
   return document;
 }
 
-function analyzeStatements(statements, scope, data, functions, text, masked, lineStarts) {
+function analyzeStatements(statements, scope, data, functions, text, masked, lineStarts, scopes) {
   for (const statement of statements) {
     if (statement.type === "localDeclaration") {
       analyzeLocalDeclarationNode(statement, scope, lineStarts);
@@ -103,7 +104,7 @@ function analyzeStatements(statements, scope, data, functions, text, masked, lin
     }
 
     if (statement.type === "functionAssignment") {
-      analyzeFunctionAssignmentNode(statement, scope, data, functions, text, masked, lineStarts);
+      analyzeFunctionAssignmentNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
       continue;
     }
 
@@ -112,8 +113,13 @@ function analyzeStatements(statements, scope, data, functions, text, masked, lin
       continue;
     }
 
+    if (statement.type === "ifStatement") {
+      analyzeIfStatementNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
+      continue;
+    }
+
     for (const nestedStatements of nestedStatementLists(statement)) {
-      analyzeStatements(nestedStatements, scope, data, functions, text, masked, lineStarts);
+      analyzeStatements(nestedStatements, scope, data, functions, text, masked, lineStarts, scopes);
     }
   }
 }
@@ -149,13 +155,14 @@ function analyzeAssignmentNode(statement, scope, data, lineStarts) {
   });
 }
 
-function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, text, masked, lineStarts) {
+function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, text, masked, lineStarts, scopes) {
   if (!IDENTIFIER_RE.test(statement.name)) {
     return;
   }
 
   const scope = createScope(`function ${statement.name}`, statement.start, statement.end, parentScope);
   scope.lineStarts = lineStarts;
+  scopes.push(scope);
   const paramSymbols = (statement.params || []).map((param) => ({
     name: param.name,
     scope: "parameter",
@@ -170,7 +177,7 @@ function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, 
     }
   }
 
-  analyzeStatements(statement.body || [], scope, data, functions, text, masked, lineStarts);
+  analyzeStatements(statement.body || [], scope, data, functions, text, masked, lineStarts, scopes);
   refineSymbolsFromCallArgumentFilters(
     text.slice(statement.bodyStart, statement.bodyEnd),
     masked.slice(statement.bodyStart, statement.bodyEnd),
@@ -205,31 +212,300 @@ function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, 
   });
 }
 
+function analyzeIfStatementNode(statement, parentScope, data, functions, text, masked, lineStarts, scopes) {
+  for (const branch of statement.branches || []) {
+    const scope = createBranchScope("if branch", branch.body || [], parentScope, lineStarts, branch.condition);
+    branch.scope = scope;
+    scopes.push(scope);
+    applyPredicateRefinements(branch.condition && branch.condition.text, scope, data, branch.condition && branch.condition.start);
+    analyzeStatements(branch.body || [], scope, data, functions, text, masked, lineStarts, scopes);
+  }
+
+  if (statement.elseBody && statement.elseBody.length > 0) {
+    const scope = createBranchScope("else branch", statement.elseBody, parentScope, lineStarts);
+    statement.elseScope = scope;
+    scopes.push(scope);
+    analyzeStatements(statement.elseBody, scope, data, functions, text, masked, lineStarts, scopes);
+  }
+}
+
+function createBranchScope(kind, statements, parentScope, lineStarts, condition) {
+  const first = statements[0];
+  const last = statements[statements.length - 1];
+  const fallbackStart = condition ? condition.end : parentScope.start;
+  const start = first ? first.start : fallbackStart;
+  const end = last ? last.end : fallbackStart;
+  const scope = createScope(kind, start, end, parentScope);
+  scope.lineStarts = lineStarts;
+  scope.condition = condition && condition.text;
+  return scope;
+}
+
+function applyPredicateRefinements(conditionText, scope, data, conditionOffset = 0) {
+  for (const refinement of predicateRefinements(conditionText, data)) {
+    const existing = lookupSymbol(scope.parent, refinement.name);
+    const symbol = existing
+      ? cloneSymbolForScope(existing)
+      : {
+          name: refinement.name,
+          scope: scope.parent && scope.parent.kind === "global" ? "global" : "local",
+          range: rangeFromOffset(scope.lineStarts, conditionOffset),
+          type: typeInfo("unknown GAP object", ["IsObject"], { confidence: "unknown" }),
+          source: "predicate"
+        };
+    refineSymbolWithFlowFilters(symbol, refinement.filters, refinement.source);
+    scope.symbols.set(refinement.name, symbol);
+  }
+}
+
+function predicateRefinements(conditionText, data) {
+  const expression = stripBalancedParens((conditionText || "").trim());
+  if (!expression) {
+    return [];
+  }
+
+  const parts = splitLogicalAnd(expression);
+  const refinements = [];
+  for (const part of parts) {
+    const term = stripBalancedParens(part.trim());
+    if (/^not\b/.test(term)) {
+      continue;
+    }
+    const call = parseCallExpression(term);
+    if (!call || call.args.length !== 1 || !IDENTIFIER_RE.test(call.args[0].trim())) {
+      continue;
+    }
+    if (!isPositiveFilterPredicate(call.name, data)) {
+      continue;
+    }
+    refinements.push({
+      name: call.args[0].trim(),
+      filters: ["IsObject", call.name],
+      source: `${call.name}(...)`
+    });
+  }
+  return refinements;
+}
+
+function isPositiveFilterPredicate(name, data) {
+  if (!/^Is[A-Z]/.test(name)) {
+    return false;
+  }
+
+  const declaration = declarationCallableInfo(name, data.declarations || { declarations: {}, names: [] });
+  if (!declaration || !declaration.type || declaration.type.declarations.length === 0) {
+    return true;
+  }
+
+  return declaration.type.declarations.some((candidate) =>
+    ["category", "filter", "property"].includes(candidate.kind)
+  );
+}
+
+function splitLogicalAnd(expression) {
+  return splitByTopLevelWordOperator(expression, "and");
+}
+
+function splitByTopLevelWordOperator(expression, operator) {
+  const parts = [];
+  let start = 0;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < expression.length; index += 1) {
+    const char = expression[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === "(" || char === "[" || char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")" || char === "]" || char === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth !== 0) {
+      continue;
+    }
+
+    if (
+      expression.slice(index, index + operator.length) === operator &&
+      hasWordBoundaries(expression, index, index + operator.length)
+    ) {
+      parts.push(expression.slice(start, index));
+      start = index + operator.length;
+      index = start - 1;
+    }
+  }
+
+  parts.push(expression.slice(start));
+  return parts;
+}
+
+function stripBalancedParens(expression) {
+  let result = expression.trim();
+  while (result.startsWith("(") && result.endsWith(")") && enclosesWholeExpression(result)) {
+    result = result.slice(1, -1).trim();
+  }
+  return result;
+}
+
+function enclosesWholeExpression(expression) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < expression.length; index += 1) {
+    const char = expression[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth -= 1;
+      if (depth === 0 && index < expression.length - 1) {
+        return false;
+      }
+    }
+    if (depth < 0) {
+      return false;
+    }
+  }
+
+  return depth === 0;
+}
+
+function cloneSymbolForScope(symbol) {
+  return {
+    ...symbol,
+    type: cloneType(symbol.type),
+    parameters: Array.isArray(symbol.parameters) ? [...symbol.parameters] : symbol.parameters,
+    returnType: symbol.returnType ? cloneType(symbol.returnType) : symbol.returnType
+  };
+}
+
+function refineSymbolWithFlowFilters(symbol, filters, source) {
+  const existing = symbol.type || typeInfo("unknown", ["IsObject"], { confidence: "unknown" });
+  const mergedFilters = sortedUnique([...(existing.filters || []), ...filters]);
+  const label = /^unknown /.test(existing.label || "") ? labelFromFilters(mergedFilters, "flow-refined object") : existing.label;
+  symbol.type = typeInfo(label, mergedFilters, {
+    confidence: "flow",
+    element: existing.element,
+    parameterTypes: existing.parameterTypes,
+    parameters: existing.parameters,
+    returnType: existing.returnType,
+    source
+  });
+}
+
+function labelFromFilters(filters, fallback) {
+  if (filters.includes("IsString")) {
+    return "string";
+  }
+  if (filters.includes("IsBool")) {
+    return "boolean";
+  }
+  if (filters.includes("IsInt") || filters.includes("IsPosInt") || filters.includes("IsNonnegativeInt")) {
+    return "integer";
+  }
+  if (filters.includes("IsRat")) {
+    return "rational";
+  }
+  if (filters.includes("IsPermGroup")) {
+    return "permutation group";
+  }
+  if (filters.includes("IsGroup")) {
+    return "group";
+  }
+  if (filters.includes("IsPerm")) {
+    return "permutation";
+  }
+  if (filters.includes("IsList")) {
+    return "list";
+  }
+  if (filters.includes("IsRecord")) {
+    return "record";
+  }
+  if (filters.includes("IsFunction")) {
+    return "function";
+  }
+  return fallback;
+}
+
 function inferReturnTypeFromStatements(statements, scope, data) {
   let returnType;
-  for (const statement of collectReturnStatements(statements)) {
-    const expression = statement.expression;
-    const inferred = expression
-      ? inferExpression(expression.text, scope, data, expression.start)
-      : typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
-    returnType = returnType ? mergeTypeInfo(returnType, inferred) : inferred;
+
+  for (const statement of statements) {
+    let inferred;
+    if (statement.type === "returnStatement") {
+      const expression = statement.expression;
+      inferred = expression
+        ? inferExpression(expression.text, scope, data, expression.start)
+        : typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
+    } else if (statement.type === "ifStatement") {
+      inferred = inferIfReturnType(statement, scope, data);
+    } else {
+      for (const nestedStatements of nestedStatementLists(statement)) {
+        const nested = inferReturnTypeFromStatements(nestedStatements, scope, data);
+        if (nested.label !== "no return value") {
+          inferred = inferred ? mergeTypeInfo(inferred, nested) : nested;
+        }
+      }
+    }
+
+    if (inferred) {
+      returnType = returnType ? mergeTypeInfo(returnType, inferred) : inferred;
+    }
   }
 
   return returnType || typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
 }
 
-function collectReturnStatements(statements) {
-  const returns = [];
-  for (const statement of statements) {
-    if (statement.type === "returnStatement") {
-      returns.push(statement);
-      continue;
-    }
-    for (const nestedStatements of nestedStatementLists(statement)) {
-      returns.push(...collectReturnStatements(nestedStatements));
+function inferIfReturnType(statement, fallbackScope, data) {
+  let returnType;
+
+  for (const branch of statement.branches || []) {
+    const branchType = inferReturnTypeFromStatements(branch.body || [], branch.scope || fallbackScope, data);
+    if (branchType.label !== "no return value") {
+      returnType = returnType ? mergeTypeInfo(returnType, branchType) : branchType;
     }
   }
-  return returns;
+
+  if (statement.elseBody && statement.elseBody.length > 0) {
+    const elseType = inferReturnTypeFromStatements(statement.elseBody, statement.elseScope || fallbackScope, data);
+    if (elseType.label !== "no return value") {
+      returnType = returnType ? mergeTypeInfo(returnType, elseType) : elseType;
+    }
+  }
+
+  return returnType;
 }
 
 function nestedStatementLists(statement) {

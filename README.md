@@ -31,6 +31,8 @@ User-defined functions also get best-effort input filters. For example, if a par
 
 Operator inference currently covers common arithmetic, comparison, and boolean forms. For example `m := n + 10;` can infer `m` as an integer after `n := 5;`, while `b := "hello" + 2;` is reported as a likely operator error.
 
+The analyzer also performs limited branch-sensitive filter flow. Inside a guarded block such as `if IsString(obj) then`, hovers, return inference, and operator diagnostics use `IsString` as evidence for `obj` in that branch.
+
 Hover descriptions are hard-wrapped by default. Adjust `gapReference.hover.wrapColumn` in VS Code settings if you prefer wider or narrower documentation lines. Use `gapReference.hover.maxExamples` and `gapReference.hover.maxExampleLines` to control how many manual examples are shown.
 
 ## Regenerate Documentation Data

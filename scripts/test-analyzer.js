@@ -122,4 +122,24 @@ assert.strictEqual(operatorAnalysis.diagnostics.length, 1, "invalid string arith
 assert(operatorAnalysis.diagnostics[0].message.includes("Operator + may fail"), "diagnostic should explain the operator risk");
 assert.strictEqual(operatorAnalysis.diagnostics[0].range.start.line, 3, "diagnostic should point at the invalid operator line");
 
+const flowSample = [
+  "flow := function(obj)",
+  "    if IsString(obj) then",
+  "        bad := obj + 1;",
+  "        return obj;",
+  "    fi;",
+  "    return [];",
+  "end;",
+  ""
+].join("\n");
+const flowAnalysis = analyzer.analyze(flowSample, "memory://flow.g");
+const flow = flowAnalysis.scopes[0].symbols.get("flow");
+assert(flow, "flow should be a global function symbol");
+assert(flow.returnType.filters.includes("IsString"), "branch predicate should refine return filters");
+assert.strictEqual(flowAnalysis.diagnostics.length, 1, "branch-refined string arithmetic should produce a diagnostic");
+assert(flowAnalysis.diagnostics[0].message.includes("left operand is string"), "diagnostic should use the branch-refined type");
+const branchHover = flowAnalysis.hoverAt(2, 17);
+assert(branchHover && branchHover.symbol.name === "obj", "hover inside a branch should resolve the parameter");
+assert(branchHover.symbol.type.filters.includes("IsString"), "branch hover should include the predicate filter");
+
 console.log("Analyzer tests passed.");

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Added branch-sensitive filter flow for simple positive GAP predicates such as `IsString(obj)` and `IsGroup(G)`.
+- Used branch-refined filters for hovers, return inference, and operator diagnostics inside guarded `if` bodies.
+
 ## 0.3.0
 
 - Added a GAP tokenizer and fault-tolerant parser layer modeled on GAP's `scanner.*` and `read.c` sources.
