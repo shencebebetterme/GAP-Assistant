@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.5
+
+- Added `for ... in ... do` loop scopes with loop-variable filters inferred from the iterator element type.
+- Used loop-variable flow for hovers, diagnostics, and returns inside loop bodies.
+
 ## 0.3.4
 
 - Added `List(collection, x -> expr)` mapper inference, including result element types from the arrow body.

@@ -123,6 +123,11 @@ function analyzeStatements(statements, scope, data, functions, text, masked, lin
       continue;
     }
 
+    if (statement.type === "forStatement") {
+      analyzeForStatementNode(statement, scope, data, functions, text, masked, lineStarts, scopes);
+      continue;
+    }
+
     for (const nestedStatements of nestedStatementLists(statement)) {
       analyzeStatements(nestedStatements, scope, data, functions, text, masked, lineStarts, scopes);
     }
@@ -235,6 +240,46 @@ function analyzeIfStatementNode(statement, parentScope, data, functions, text, m
     scopes.push(scope);
     analyzeStatements(statement.elseBody, scope, data, functions, text, masked, lineStarts, scopes);
   }
+}
+
+function analyzeForStatementNode(statement, parentScope, data, functions, text, masked, lineStarts, scopes) {
+  const iteratorType = statement.iterator
+    ? inferExpression(statement.iterator.text, parentScope, data, statement.iterator.start)
+    : typeInfo("unknown collection", ["IsObject"], { confidence: "unknown" });
+  const loopScope = createLoopScope(statement, parentScope, lineStarts);
+  statement.scope = loopScope;
+  scopes.push(loopScope);
+
+  bindLoopVariable(statement, loopScope, iteratorType, lineStarts);
+  analyzeStatements(statement.body || [], loopScope, data, functions, text, masked, lineStarts, scopes);
+}
+
+function createLoopScope(statement, parentScope, lineStarts) {
+  const first = statement.body && statement.body[0];
+  const last = statement.body && statement.body[statement.body.length - 1];
+  const fallbackStart = statement.iterator ? statement.iterator.end : statement.start;
+  const scope = createScope("for loop", first ? first.start : fallbackStart, last ? last.end : fallbackStart, parentScope);
+  scope.lineStarts = lineStarts;
+  scope.iterator = statement.iterator && statement.iterator.text;
+  return scope;
+}
+
+function bindLoopVariable(statement, loopScope, iteratorType, lineStarts) {
+  if (!statement.variable || !IDENTIFIER_RE.test(statement.variable.text)) {
+    return;
+  }
+
+  const elementType = (iteratorType && iteratorType.element) ||
+    elementTypeFromCollection(iteratorType) ||
+    typeInfo("collection element", ["IsObject"], { confidence: "unknown" });
+
+  loopScope.symbols.set(statement.variable.text, {
+    name: statement.variable.text,
+    scope: "loop variable",
+    range: rangeFromOffset(lineStarts, statement.variable.start),
+    type: elementType,
+    source: statement.iterator ? `for ${statement.iterator.text}` : "for loop"
+  });
 }
 
 function createBranchScope(kind, statements, parentScope, lineStarts, condition) {
@@ -479,6 +524,11 @@ function inferReturnTypeFromStatements(statements, scope, data) {
         : typeInfo("no return value", ["IsObject"], { confidence: "inferred" });
     } else if (statement.type === "ifStatement") {
       inferred = inferIfReturnType(statement, scope, data);
+    } else if (statement.type === "forStatement") {
+      const nested = inferReturnTypeFromStatements(statement.body || [], statement.scope || scope, data);
+      if (nested.label !== "no return value") {
+        inferred = nested;
+      }
     } else {
       for (const nestedStatements of nestedStatementLists(statement)) {
         const nested = inferReturnTypeFromStatements(nestedStatements, scope, data);

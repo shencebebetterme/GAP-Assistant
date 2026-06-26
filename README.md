@@ -39,6 +39,8 @@ The same compatibility check is applied to user-defined functions once their par
 
 Common mapper calls are analyzed as well. In `List([1 .. 4], i -> Factorial(i))`, the arrow parameter `i` is treated as an integer from the range element type, the result is inferred as a list of positive integers, and mistakes inside the mapper body can produce diagnostics.
 
+Loop variables also receive iterator element filters. In `for i in [1 .. 4] do`, `i` is treated as an integer inside the loop body; in `for g in GeneratorsOfGroup(G) do`, `g` inherits the generator element filters.
+
 Hover descriptions are hard-wrapped by default. Adjust `gapReference.hover.wrapColumn` in VS Code settings if you prefer wider or narrower documentation lines. Use `gapReference.hover.maxExamples` and `gapReference.hover.maxExampleLines` to control how many manual examples are shown.
 
 ## Regenerate Documentation Data

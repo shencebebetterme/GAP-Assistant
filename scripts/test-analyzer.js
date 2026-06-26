@@ -218,4 +218,38 @@ assert.strictEqual(listDiagnostics.length, 1, "invalid arithmetic inside a List 
 assert(listDiagnostics[0].message.includes("left operand is integer"), "List mapper diagnostic should use the arrow parameter type");
 assert.strictEqual(listDiagnostics[0].range.start.line, 1, "List mapper diagnostic should point at the mapper body line");
 
+const forLoopSample = [
+  "for i in [1 .. 4] do",
+  "    bad := i + \"x\";",
+  "od;",
+  "",
+  "G := SymmetricGroup(4);",
+  "for g in GeneratorsOfGroup(G) do",
+  "    item := g;",
+  "od;",
+  "",
+  "firstValue := function()",
+  "    for j in [1 .. 4] do",
+  "        return j;",
+  "    od;",
+  "end;",
+  ""
+].join("\n");
+const forLoopAnalysis = analyzer.analyze(forLoopSample, "memory://for-loop.g");
+const forDiagnostics = forLoopAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "operator-type");
+assert.strictEqual(forDiagnostics.length, 1, "invalid arithmetic inside a for loop should be diagnosed");
+assert(forDiagnostics[0].message.includes("left operand is integer"), "for-loop diagnostic should use the iterator element type");
+assert.strictEqual(forDiagnostics[0].range.start.line, 1, "for-loop diagnostic should point at the loop body line");
+const loopHover = forLoopAnalysis.hoverAt(1, 11);
+assert(loopHover && loopHover.symbol.name === "i", "hover inside a for loop should resolve the loop variable");
+assert(loopHover.symbol.type.filters.includes("IsInt"), "range loop variable should infer integer element type");
+const generatorHover = forLoopAnalysis.hoverAt(6, 12);
+assert(generatorHover && generatorHover.symbol.name === "g", "hover inside a generator loop should resolve the loop variable");
+assert(
+  generatorHover.symbol.type.filters.includes("IsMultiplicativeElementWithInverse"),
+  "generator loop variable should inherit the collection element filters"
+);
+const firstValue = forLoopAnalysis.scopes[0].symbols.get("firstValue");
+assert(firstValue && firstValue.returnType.filters.includes("IsInt"), "return inside a for loop should use loop-variable flow");
+
 console.log("Analyzer tests passed.");
