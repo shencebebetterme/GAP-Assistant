@@ -92,6 +92,7 @@ async function main() {
         version: 1,
         text: [
           "G := SymmetricGroup(4);",
+          "str := \"hello\";",
           "Size(G);",
           "uses := function(obj)",
           "    return Size(obj);",
@@ -118,7 +119,7 @@ async function main() {
   });
 
   const hover = await waitForResponse(2);
-  assert(hover.result.contents.value.includes("Static GAP inference"), "hover should include static inference");
+  assert(hover.result.contents.value.includes("GAP inference"), "hover should include static inference");
   assert(hover.result.contents.value.includes("IsPermGroup"), "hover should include inferred GAP filters");
   assert(!hover.result.contents.value.includes("Source:"), "hover should not include internal source lines");
   assert(!hover.result.contents.value.includes("Confidence:"), "hover should not include confidence lines");
@@ -137,7 +138,25 @@ async function main() {
     }
   });
 
-  const sizeHover = await waitForResponse(4);
+  const stringHover = await waitForResponse(4);
+  assert(stringHover.result.contents.value.includes("`string`"), "hover should infer string literal assignments");
+  assert(stringHover.result.contents.value.includes("IsString"), "hover should include IsString filter");
+
+  send({
+    id: 6,
+    method: "textDocument/hover",
+    params: {
+      textDocument: {
+        uri: "memory://sample.g"
+      },
+      position: {
+        line: 2,
+        character: 1
+      }
+    }
+  });
+
+  const sizeHover = await waitForResponse(6);
   assert(sizeHover.result.contents.value.includes("Input filters"), "hover should include declaration input filters");
   assert(sizeHover.result.contents.value.includes("IsListOrCollection"), "hover should include Size input filter");
 
@@ -149,7 +168,7 @@ async function main() {
         uri: "memory://sample.g"
       },
       position: {
-        line: 2,
+        line: 3,
         character: 1
       }
     }

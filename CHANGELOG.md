@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Fixed literal string inference for assignments and return expressions.
+- Made static inference hovers more compact with a terse summary line and shorter labeled rows.
+
 ## 0.2.1
 
 - Fixed hovers for inferred global variables, local variables, and user-defined functions that do not have manual documentation entries.

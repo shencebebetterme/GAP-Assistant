@@ -164,7 +164,10 @@ function parseAssignments(text, masked, scope, data, excludedRanges = [], baseOf
     }
 
     const name = match[1];
-    const rawExpression = text.slice(match.index + match[0].indexOf(match[2]), match.index + match[0].length - 1).trim();
+    const assignmentIndex = match[0].indexOf(":=");
+    const expressionStart = match.index + assignmentIndex + 2;
+    const expressionEnd = match.index + match[0].length - 1;
+    const rawExpression = text.slice(expressionStart, expressionEnd).trim();
     if (/^function\s*\(/.test(rawExpression)) {
       continue;
     }
@@ -281,7 +284,10 @@ function inferReturnType(body, bodyOffset, scope, data) {
   let match;
 
   while ((match = regex.exec(maskCommentsAndStrings(body))) !== null) {
-    const expression = body.slice(match.index + match[0].indexOf(match[1]), match.index + match[0].length - 1).trim();
+    const returnIndex = match[0].indexOf("return");
+    const expressionStart = match.index + returnIndex + "return".length;
+    const expressionEnd = match.index + match[0].length - 1;
+    const expression = body.slice(expressionStart, expressionEnd).trim();
     returnType = returnType ? mergeTypeInfo(returnType, inferExpression(expression, scope, data)) : inferExpression(expression, scope, data);
   }
 
@@ -306,7 +312,7 @@ function inferExpression(expression, scope, data) {
   if (/^-?\d+\s*\/\s*-?\d+$/.test(expr)) {
     return typeInfo("rational", ["IsObject", "IsRat"], { confidence: "literal" });
   }
-  if (/^".*"$/.test(expr)) {
+  if (/^"(?:\\.|[^"\\])*"$/.test(expr)) {
     return typeInfo("string", ["IsObject", "IsString", "IsList"], { confidence: "literal" });
   }
   if (/^\[.*\]$/.test(expr)) {
@@ -661,54 +667,48 @@ function formatInferenceMarkdown(hover) {
 
   const symbol = hover.symbol;
   const type = symbol.returnType ? symbol.type : symbol.type;
-  const lines = ["### Static GAP inference", ""];
-
-  if (["global", "local", "parameter"].includes(symbol.scope)) {
-    lines.push(`_${escapeMarkdown(symbol.scope)} symbol_`, "");
-  }
-
   const displayName = symbol.name || hover.word.text;
-  lines.push("```gap");
-  lines.push(`${displayName} : ${formatTypeLabel(type)}`);
-  lines.push("```", "");
+  const lines = ["### GAP inference", ""];
+  const summary = [codeSpan(displayName)];
+  if (symbol.scope) {
+    summary.push(`_${escapeMarkdown(scopeLabel(symbol.scope))}_`);
+  }
+  summary.push(codeSpan(formatTypeLabel(type)));
+  lines.push(summary.join(" · "), "");
 
   appendTypeDetails(lines, type);
 
   if (symbol.returnType) {
-    lines.push(`Returns: \`${formatTypeLabel(symbol.returnType)}\``);
-    appendFilterLine(lines, symbol.returnType.filters, "Return filters");
-    lines.push("");
+    lines.push(`**Returns** ${codeSpan(formatTypeLabel(symbol.returnType))}${formatInlineFilters(symbol.returnType.filters)}`, "");
   } else if (type && type.returnType) {
-    lines.push(`Returns: \`${formatTypeLabel(type.returnType)}\``);
-    appendFilterLine(lines, type.returnType.filters, "Return filters");
-    lines.push("");
+    lines.push(`**Returns** ${codeSpan(formatTypeLabel(type.returnType))}${formatInlineFilters(type.returnType.filters)}`, "");
   }
 
   if (symbol.parameters && symbol.parameters.length > 0) {
-    lines.push("Parameters:");
+    lines.push("**Parameters**");
     for (const parameter of symbol.parameters) {
-      lines.push(`- \`${parameter.name}\`: ${formatTypeLabel(parameter.type)}`);
+      lines.push(`- ${codeSpan(parameter.name)}: ${codeSpan(formatTypeLabel(parameter.type))}`);
     }
     lines.push("");
   } else if (type && type.parameters && type.parameters.length > 0) {
-    lines.push(`Inputs: ${type.parameters.map((param) => `\`${param}\``).join(", ")}`, "");
+    lines.push(`**Inputs** ${type.parameters.map(codeSpan).join(", ")}`, "");
   }
 
   if (type && type.parameterTypes && type.parameterTypes.length > 0) {
-    lines.push("Input filters:");
+    lines.push("**Input filters**");
     type.parameterTypes.forEach((parameterType, index) => {
       const filters = parameterType.filters && parameterType.filters.length > 0
         ? parameterType.filters.map((filter) => `\`${filter}\``).join(", ")
         : "`IsObject`";
       const name = type.parameters && type.parameters[index] ? type.parameters[index] : `arg${index + 1}`;
-      lines.push(`- \`${name}\`: ${filters}`);
+      lines.push(`- ${codeSpan(name)}: ${filters}`);
     });
     lines.push("");
   }
 
   if (type && type.declarations && type.declarations.length > 0) {
     const declaration = type.declarations[0];
-    lines.push(`Declaration: \`${declaration.callee}\` in \`${declaration.file}:${declaration.line}\``, "");
+    lines.push(`**Declaration** \`${declaration.callee}\` · \`${declaration.file}:${declaration.line}\``, "");
   }
 
   return lines.join("\n");
@@ -718,10 +718,9 @@ function appendTypeDetails(lines, type) {
   if (!type) {
     return;
   }
-  appendFilterLine(lines, type.filters, "Filters");
+  appendFilterLine(lines, type.filters, "**Filters**");
   if (type.element) {
-    lines.push(`Element: \`${formatTypeLabel(type.element)}\``);
-    appendFilterLine(lines, type.element.filters, "Element filters");
+    lines.push(`**Element** ${codeSpan(formatTypeLabel(type.element))}${formatInlineFilters(type.element.filters)}`);
   }
 }
 
@@ -729,6 +728,26 @@ function appendFilterLine(lines, filters, label) {
   if (filters && filters.length > 0) {
     lines.push(`${label}: ${filters.map((filter) => `\`${filter}\``).join(", ")}`);
   }
+}
+
+function formatInlineFilters(filters) {
+  return filters && filters.length > 0
+    ? ` · ${filters.map((filter) => `\`${filter}\``).join(", ")}`
+    : "";
+}
+
+function scopeLabel(scope) {
+  if (scope === "documented global") {
+    return "system";
+  }
+  if (scope === "declared global") {
+    return "declared";
+  }
+  return scope;
+}
+
+function codeSpan(value) {
+  return `\`${String(value).replace(/`/g, "\\`")}\``;
 }
 
 function formatTypeLabel(type) {

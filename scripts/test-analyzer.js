@@ -14,6 +14,7 @@ const sample = `# static inference sample
 G := SymmetricGroup(4);
 gens := GeneratorsOfGroup(G);
 ok := IsGroup(G);
+str := "hello";
 
 f := function(n)
     local values;
@@ -47,6 +48,11 @@ const ok = globalScope.symbols.get("ok");
 assert(ok, "ok should be a global symbol");
 assert(ok.type.filters.includes("IsBool"), "IsGroup should infer boolean");
 
+const str = globalScope.symbols.get("str");
+assert(str, "str should be a global symbol");
+assert(str.type.filters.includes("IsString"), "string literals should infer IsString");
+assert(str.type.filters.includes("IsList"), "GAP strings should also satisfy IsList");
+
 const f = globalScope.symbols.get("f");
 assert(f, "f should be a global function symbol");
 assert(f.type.filters.includes("IsFunction"), "f should satisfy IsFunction");
@@ -68,10 +74,10 @@ assert(hoverG && hoverG.symbol.name === "G", "hover at G should resolve global s
 const hoverGens = analyzer.hoverAt(sample, 2, 1);
 assert(hoverGens && hoverGens.symbol.name === "gens", "hover at gens should resolve global symbol");
 
-const hoverFunction = analyzer.hoverAt(sample, 5, 1);
+const hoverFunction = analyzer.hoverAt(sample, 6, 1);
 assert(hoverFunction && hoverFunction.symbol.name === "f", "hover at f should resolve user function symbol");
 
-const hoverLocal = analyzer.hoverAt(sample, 7, 6);
+const hoverLocal = analyzer.hoverAt(sample, 8, 6);
 assert(hoverLocal && hoverLocal.symbol.name === "values", "hover at values should resolve local symbol");
 
 const hoverBuiltin = analyzer.hoverAt("GeneratorsOfGroup(G);", 0, 3);
@@ -82,9 +88,17 @@ assert(
 );
 const builtinMarkdown = formatInferenceMarkdown(hoverBuiltin);
 assert(builtinMarkdown.includes("- `G`: `IsMagmaWithInverses`"), "input filters should use signature parameter names");
+assert(builtinMarkdown.includes("### GAP inference"), "static hover should use the terse title");
+assert(!builtinMarkdown.includes("```gap"), "static hover should not use a bulky code block");
 assert(!builtinMarkdown.includes("Source:"), "static hover should not include internal source lines");
 assert(!builtinMarkdown.includes("Documentation return hint"), "static hover should not include documentation return hints");
 assert(!builtinMarkdown.includes("Confidence:"), "static hover should not include confidence lines");
+
+const hoverString = analyzer.hoverAt('str := "hello";', 0, 1);
+const stringMarkdown = formatInferenceMarkdown(hoverString);
+assert(hoverString.symbol.type.filters.includes("IsString"), "hover at a string assignment should infer IsString");
+assert(stringMarkdown.includes("`str`"), "string hover should include symbol name");
+assert(stringMarkdown.includes("`string`"), "string hover should include terse type label");
 
 const hoverSize = analyzer.hoverAt("Size(G);", 0, 1);
 assert(hoverSize.symbol.type.parameterTypes[0].filters.includes("IsListOrCollection"), "Size should expose declaration input filters");
