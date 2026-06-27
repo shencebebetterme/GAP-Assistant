@@ -27,13 +27,15 @@ Open `examples/sample.g`, then hover names such as `SymmetricGroup`, `Size`, or 
 
 Static inference is filter-centric. A GAP value is modeled with every filter the analyzer can infer, for example `SymmetricGroup(4)` is a group object satisfying filters such as `IsGroup`, `IsPermGroup`, and `IsFinite`; this avoids pretending GAP has a single classical OO inheritance type. Hovers show the most useful result as a compact highlighted snippet, with inferred types styled distinctly from symbol names and container details such as `list[positive integer]` or record fields like `count: integer` kept in a terse structure section.
 
-User-defined functions also get best-effort input filters. For example, if a parameter is passed to `Size(obj)` or `GeneratorsOfGroup(obj)`, the hover can show GAP declaration filters such as `IsListOrCollection` or `IsMagmaWithInverses`; if the function is later called with `SymmetricGroup(4)`, those call-site filters are merged as additional evidence.
+User-defined functions also get best-effort input filters. For example, if a parameter is passed to `Size(obj)` or `GeneratorsOfGroup(obj)`, the hover can show GAP declaration filters such as `IsListOrCollection` or `IsMagmaWithInverses`; compatible call-site filters are tracked as observed evidence without narrowing the function's displayed requirement.
 
 Operator inference currently covers common arithmetic, comparison, boolean, membership, `mod`, and power forms following the precedence in GAP's reader. For example `m := n + 10;` can infer `m` as an integer after `n := 5;`, while `b := "hello" + 2;`, `not 3`, `1 in 5`, or `2 ^ 3 ^ 4` are reported as likely operator errors.
 
 Control-flow conditions are checked when their type is clear. Expressions such as `if 3 then`, `elif "bad" then`, `while [1] do`, and `repeat ... until 5` are reported because GAP expects boolean conditions.
 
 Selector inference follows GAP's term-level selector behavior. The analyzer can infer element filters for `gens[1]`, preserve element filters through `gens{[1]}`, infer characters and strings from string selectors, and use record literal field types for expressions such as `rec(count := 3).count`. Clear selector mistakes such as `5[1]`, `gens["x"]`, `gens{1}`, or `[1, 2].name` are reported.
+
+Collection materializers preserve element types where the input type is known. For example, `Elements(G)` or `AsList(G)` after `G := SymmetricGroup(4)` is inferred as a list of group elements, and indexing that list preserves the group element type.
 
 Declared local variables are tracked for definite assignment. If a function declares `local value;` and then reads `value` before assigning to it, the checker reports the likely GAP runtime error; unknown identifiers that may be globals are still left alone.
 

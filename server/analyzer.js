@@ -749,6 +749,9 @@ function labelFromFilters(filters, fallback) {
   if (filters.includes("IsGroup")) {
     return "group";
   }
+  if (filters.includes("IsMagmaWithInverses")) {
+    return "group";
+  }
   if (filters.includes("IsPerm")) {
     return "permutation";
   }
@@ -993,7 +996,9 @@ function refineFunctionParametersFromCallSites(text, masked, functions, globalSc
         return;
       }
 
-      refineSymbolWithExpectedFilters(parameter, argumentType.filters, `${call.name} call argument ${index + 1}`);
+      refineSymbolWithExpectedFilters(parameter, argumentType.filters, `${call.name} call argument ${index + 1}`, {
+        observed: true
+      });
     });
 
     fn.symbol.type = functionType(fn.parameters.map((parameter) => parameter.name), fn.returnType, {
@@ -1002,10 +1007,25 @@ function refineFunctionParametersFromCallSites(text, masked, functions, globalSc
   }
 }
 
-function refineSymbolWithExpectedFilters(symbol, filters, source) {
+function refineSymbolWithExpectedFilters(symbol, filters, source, options = {}) {
   const existing = symbol.type || typeInfo("unknown", ["IsObject"], { confidence: "unknown" });
   const canRefine = symbol.scope === "parameter" || existing.confidence === "unknown" || /^unknown /.test(existing.label || "");
   if (!canRefine) {
+    return;
+  }
+
+  const observedFilters = sortedUnique([...(existing.observedFilters || []), ...(options.observed ? filters : [])]);
+  if (options.observed && hasMeaningfulFilters(existing.filters)) {
+    symbol.type = typeInfo(existing.label, existing.filters, {
+      confidence: existing.confidence,
+      element: existing.element,
+      fields: existing.fields,
+      observedFilters,
+      parameterTypes: existing.parameterTypes,
+      parameters: existing.parameters,
+      returnType: existing.returnType,
+      source: existing.source
+    });
     return;
   }
 
@@ -1015,11 +1035,16 @@ function refineSymbolWithExpectedFilters(symbol, filters, source) {
     confidence: existing.confidence === "unknown" ? "call context" : "merged",
     element: existing.element,
     fields: existing.fields,
+    observedFilters,
     parameterTypes: existing.parameterTypes,
     parameters: existing.parameters,
     returnType: existing.returnType,
     source
   });
+}
+
+function hasMeaningfulFilters(filters) {
+  return Array.isArray(filters) && filters.some((filter) => filter && filter !== "IsObject");
 }
 
 function parseLocalDeclarations(body, bodyOffset, lineStarts, scope) {
@@ -1889,6 +1914,10 @@ function inferCall(name, args, scope, data, expressionOffset = 0, argumentSpans 
     return inferHigherOrderCollectionCall(name, args, scope, data, expressionOffset, argumentSpans);
   }
 
+  if (["Elements", "AsList", "AsSet", "AsSSortedList"].includes(name)) {
+    return inferCollectionMaterializationCall(name, args, scope, data, expressionOffset, argumentSpans);
+  }
+
   if (hardCoded) {
     return addCallContext(hardCoded(), name, args, scope);
   }
@@ -1959,6 +1988,26 @@ function higherOrderResultType(name, collectionElement, bodyType, args, scope) {
   }
 
   return typeInfo("GAP object", ["IsObject"], { confidence: "unknown", source: `${name}(...)` });
+}
+
+function inferCollectionMaterializationCall(name, args, scope, data, expressionOffset, argumentSpans) {
+  const collectionSpan = argumentSpans[0] || { start: 0 };
+  const collectionType = args[0]
+    ? inferExpression(args[0], scope, data, expressionOffset + collectionSpan.start)
+    : typeInfo("unknown collection", ["IsObject"], { confidence: "unknown" });
+  const collectionElement = collectionType && collectionType.element;
+  const element = collectionElement || elementTypeFromCollection(collectionType);
+  const filters = ["IsObject", "IsCollection", "IsList"];
+  if (name === "AsSet" || name === "AsSSortedList" || name === "Elements") {
+    filters.push("IsDenseList");
+  }
+
+  return typeInfo("list", filters, {
+    confidence: "collection materialization",
+    source: `${name}(...)`,
+    element,
+    arguments: callArguments(args, scope)
+  });
 }
 
 function inferArrowCallback(argumentText, mapper, firstParameterType, scope, data, expressionOffset, mapperSpan, parameterSource) {
@@ -2039,6 +2088,13 @@ function elementTypeFromCollection(collectionType) {
   }
   if (hasAnyFilter(collectionType, ["IsString"])) {
     return typeInfo("character", ["IsObject"], { confidence: "string element" });
+  }
+  if (hasAnyFilter(collectionType, ["IsGroup", "IsMagmaWithInverses", "IsPermGroup"])) {
+    const filters = ["IsObject", "IsMultiplicativeElementWithInverse"];
+    if (hasAnyFilter(collectionType, ["IsPermGroup"])) {
+      filters.push("IsPerm");
+    }
+    return typeInfo("group element", filters, { confidence: "group collection" });
   }
   if (hasAnyFilter(collectionType, ["IsList", "IsDenseList", "IsCollection"])) {
     return typeInfo("collection element", ["IsObject"], { confidence: "collection" });
@@ -2465,7 +2521,8 @@ function functionType(parameters, returnType, options = {}) {
     signatures: options.signatures,
     documentation: options.documentation,
     parameterTypes: options.parameterTypes,
-    declarations: options.declarations
+    declarations: options.declarations,
+    observedFilters: options.observedFilters
   });
 }
 
@@ -2478,6 +2535,7 @@ function typeInfo(label, filters = [], options = {}) {
     parameters: options.parameters || [],
     returnType: options.returnType,
     fields: options.fields,
+    observedFilters: options.observedFilters || [],
     signatures: options.signatures || [],
     documentation: options.documentation,
     parameterTypes: options.parameterTypes || [],
@@ -2495,6 +2553,7 @@ function cloneType(type) {
   return {
     ...type,
     filters: [...(type.filters || [])],
+    observedFilters: [...(type.observedFilters || [])],
     parameters: [...(type.parameters || [])],
     fields: type.fields ? { ...type.fields } : undefined,
     signatures: [...(type.signatures || [])]
@@ -2515,7 +2574,8 @@ function mergeTypeInfo(left, right) {
     {
       confidence: left.confidence === right.confidence ? left.confidence : "merged",
       element: left.element && right.element ? mergeTypeInfo(left.element, right.element) : left.element || right.element,
-      fields: mergeFieldMaps(left.fields, right.fields)
+      fields: mergeFieldMaps(left.fields, right.fields),
+      observedFilters: [...(left.observedFilters || []), ...(right.observedFilters || [])]
     }
   );
 }

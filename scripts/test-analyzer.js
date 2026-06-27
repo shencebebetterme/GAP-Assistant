@@ -63,7 +63,8 @@ assert(f.returnType.filters.includes("IsList"), "f should return a list");
 const uses = globalScope.symbols.get("uses");
 assert(uses, "uses should be a global function symbol");
 assert(uses.parameters[0].type.filters.includes("IsMagmaWithInverses"), "uses parameter should infer filters from GeneratorsOfGroup");
-assert(uses.parameters[0].type.filters.includes("IsPermGroup"), "uses parameter should merge filters from call-site arguments");
+assert(!uses.parameters[0].type.filters.includes("IsPermGroup"), "uses parameter requirements should not be narrowed by call-site arguments");
+assert(uses.parameters[0].type.observedFilters.includes("IsPermGroup"), "uses parameter should keep call-site filters as observed evidence");
 assert(uses.returnType.filters.includes("IsInt"), "uses should infer Size return as integer-like");
 assert(uses.type.parameterTypes[0].filters.includes("IsMagmaWithInverses"), "uses function type should expose parameter filters");
 
@@ -79,6 +80,11 @@ assert(hoverGens && hoverGens.symbol.name === "gens", "hover at gens should reso
 const hoverFunction = analyzer.hoverAt(sample, 6, 1);
 assert(hoverFunction && hoverFunction.symbol.name === "f", "hover at f should resolve user function symbol");
 
+const hoverUsesFunction = analyzer.hoverAt(sample, 12, 1);
+const hoverUsesMarkdown = formatInferenceMarkdown(hoverUsesFunction);
+assert(hoverUsesMarkdown.includes("<strong>group</strong>"), "function hover should show broad group requirement from GeneratorsOfGroup");
+assert(!hoverUsesMarkdown.includes("<strong>permutation group</strong>"), "function hover should not show one permutation-group call site as a requirement");
+
 const hoverLocal = analyzer.hoverAt(sample, 8, 6);
 assert(hoverLocal && hoverLocal.symbol.name === "values", "hover at values should resolve local symbol");
 
@@ -93,7 +99,7 @@ assert(builtinMarkdown.includes("#### GAP inference"), "static hover should use 
 assert(builtinMarkdown.includes("<div style="), "static hover should include a compact styled signature block");
 assert(builtinMarkdown.includes("# system function"), "documented hover should show the callable scope");
 assert(builtinMarkdown.includes("<code>GeneratorsOfGroup</code>"), "documented hover should show the callable name");
-assert(builtinMarkdown.includes("<strong>IsMagmaWithInverses</strong>"), "documented hover should style input types");
+assert(builtinMarkdown.includes("<strong>group</strong>"), "documented hover should style group-like input types");
 assert(builtinMarkdown.includes("<strong>list</strong>"), "documented hover should style return types");
 assert(!builtinMarkdown.includes("**Type**"), "static hover should not repeat the signature type");
 assert(!builtinMarkdown.includes("**Filters**"), "static hover should not repeat top-level filters");
@@ -131,6 +137,25 @@ assert(infoMarkdown.includes("<code>name</code>"), "record hover should show str
 assert(infoMarkdown.includes("<strong>string</strong>"), "record hover should show string field types");
 assert(infoMarkdown.includes("<code>first</code>"), "record hover should preserve selected list element field names");
 assert(infoMarkdown.includes("<strong>positive integer</strong>"), "record hover should preserve selected list element field types");
+
+const materializedElementsSample = [
+  "G := SymmetricGroup(4);",
+  "elems := Elements(G);",
+  "asList := AsList(G);",
+  "first := elems[1];",
+  ""
+].join("\n");
+const materializedElementsAnalysis = analyzer.analyze(materializedElementsSample, "memory://elements.g");
+const elems = materializedElementsAnalysis.scopes[0].symbols.get("elems");
+assert(elems && elems.type.filters.includes("IsList"), "Elements should infer a list");
+assert(elems.type.element && elems.type.element.filters.includes("IsMultiplicativeElementWithInverse"), "Elements of a group should infer group elements");
+const asList = materializedElementsAnalysis.scopes[0].symbols.get("asList");
+assert(asList && asList.type.element && asList.type.element.filters.includes("IsMultiplicativeElementWithInverse"), "AsList of a group should infer group elements");
+const firstElement = materializedElementsAnalysis.scopes[0].symbols.get("first");
+assert(firstElement && firstElement.type.filters.includes("IsMultiplicativeElementWithInverse"), "indexing Elements(G) should preserve group element type");
+const elemsHoverMarkdown = formatInferenceMarkdown(materializedElementsAnalysis.hoverAt(1, 1));
+assert(elemsHoverMarkdown.includes("<strong>list</strong>"), "Elements hover should show list type");
+assert(elemsHoverMarkdown.includes("<strong>group element</strong>"), "Elements hover should show group element structure");
 
 const hoverSize = analyzer.hoverAt("Size(G);", 0, 1);
 assert(hoverSize.symbol.type.parameterTypes[0].filters.includes("IsListOrCollection"), "Size should expose declaration input filters");

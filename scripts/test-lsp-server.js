@@ -201,7 +201,8 @@ async function main() {
 
   const functionHover = await waitForResponse(5);
   assert(functionHover.result.contents.value.includes("<code>uses</code>"), "function hover should include the function name");
-  assert(functionHover.result.contents.value.includes("<strong>permutation group</strong>"), "function hover should include styled inferred input type in the signature");
+  assert(functionHover.result.contents.value.includes("<strong>IsListOrCollection</strong>"), "function hover should include body-derived input requirement in the signature");
+  assert(!functionHover.result.contents.value.includes("<strong>permutation group</strong>"), "function hover should not narrow requirements to one call-site type");
   assert(!functionHover.result.contents.value.includes("Source:"), "function hover should not include internal source lines");
 
   send({ id: 3, method: "shutdown", params: null });

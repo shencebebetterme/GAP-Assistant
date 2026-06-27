@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.20
+
+- Kept user-function parameter requirements from being narrowed by later call-site evidence.
+- Stored compatible call-site filters separately as observed evidence for future analyzer use.
+- Inferred element types for collection materializers such as `Elements`, `AsList`, `AsSet`, and `AsSSortedList`.
+- Inferred `Elements(G)` and `AsList(G)` for group-like inputs as lists of group elements.
+
 ## 0.3.19
 
 - Styled inferred type tokens with a distinct colored, bold code treatment in inference hovers.
