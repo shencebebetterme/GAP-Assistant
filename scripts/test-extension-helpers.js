@@ -31,6 +31,25 @@ Module._load = function patchedLoad(request, parent, isMain) {
         }
       },
       Hover: class Hover {},
+      Position: class Position {
+        constructor(line, character) {
+          this.line = line;
+          this.character = character;
+        }
+      },
+      Range: class Range {
+        constructor(start, end) {
+          this.start = start;
+          this.end = end;
+        }
+      },
+      InlineValueVariableLookup: class InlineValueVariableLookup {
+        constructor(range, variableName, caseSensitiveLookup) {
+          this.range = range;
+          this.variableName = variableName;
+          this.caseSensitiveLookup = caseSensitiveLookup;
+        }
+      },
       DebugAdapterExecutable: class DebugAdapterExecutable {},
       Uri: {
         file: (value) => ({ fsPath: value }),
@@ -50,7 +69,8 @@ Module._load = function patchedLoad(request, parent, isMain) {
       },
       languages: {
         registerDocumentSemanticTokensProvider: () => ({ dispose() {} }),
-        registerHoverProvider: () => ({ dispose() {} })
+        registerHoverProvider: () => ({ dispose() {} }),
+        registerInlineValuesProvider: () => ({ dispose() {} })
       },
       window: {
         createOutputChannel: () => ({
@@ -95,8 +115,57 @@ try {
     "C:\\GAP\\pkg\\digraphs\\doc\\chap2.html",
     "package manual links should resolve under the configured GAP installation"
   );
+
+  const inlineDocument = testDocument(`G := SymmetricGroup(4);
+person := rec(
+  name := "Ada",
+  age := 42
+);
+makeValues := function(n)
+  local values;
+  values := [1, 2, 3];
+  return values;
+end;
+after := 1;
+`);
+  const inlineValues = extension.__test.gapInlineValuesForDocument(
+    inlineDocument,
+    { start: { line: 0, character: 0 }, end: { line: 10, character: 0 } },
+    { stoppedLocation: { start: { line: 7, character: 2 }, end: { line: 7, character: 2 } } }
+  );
+  assert.deepStrictEqual(
+    inlineValues.map((value) => `${value.variableName}@${value.range.start.line}`),
+    ["G@0", "person@1", "values@7"],
+    "inline values should cover simple assignments up to the paused line and skip function definitions and record fields"
+  );
 } finally {
   Module._load = originalLoad;
+}
+
+function testDocument(text) {
+  const lineStarts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\n") {
+      lineStarts.push(index + 1);
+    }
+  }
+  const lines = text.split(/\n/);
+  return {
+    languageId: "gap",
+    lineCount: lines.length,
+    getText: () => text,
+    lineAt: (line) => ({ text: lines[line] || "" }),
+    positionAt(offset) {
+      let line = 0;
+      while (line + 1 < lineStarts.length && lineStarts[line + 1] <= offset) {
+        line += 1;
+      }
+      return {
+        line,
+        character: offset - lineStarts[line]
+      };
+    }
+  };
 }
 
 console.log("Extension helper tests passed.");

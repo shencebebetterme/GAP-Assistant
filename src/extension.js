@@ -7,6 +7,7 @@ const vscode = require("vscode");
 const { getEntries, isIdentifier, loadDeclarations, loadDocumentation } = require("./docs");
 const { GapLanguageServerClient } = require("./lspClient");
 const { GapAnalyzer, formatInferenceMarkdown } = require("../server/analyzer");
+const { parseGapSource } = require("../server/parser");
 
 const GAP_SELECTOR = { language: "gap" };
 const IDENTIFIER_PATTERN = /[A-Za-z_][A-Za-z0-9_]*/;
@@ -46,6 +47,7 @@ function activate(context) {
     ),
     vscode.debug.registerDebugConfigurationProvider("gap", new GapDebugConfigurationProvider()),
     vscode.languages.registerHoverProvider(GAP_SELECTOR, new GapHoverProvider(docs, analyzer, languageServerClient)),
+    registerInlineValuesProvider(),
     vscode.languages.registerDocumentSemanticTokensProvider(
       GAP_SELECTOR,
       new GapSemanticTokensProvider(docs),
@@ -98,6 +100,13 @@ function diagnosticSeverity(severity) {
     return vscode.DiagnosticSeverity.Information;
   }
   return vscode.DiagnosticSeverity.Hint;
+}
+
+function registerInlineValuesProvider() {
+  if (typeof vscode.languages.registerInlineValuesProvider !== "function") {
+    return { dispose() {} };
+  }
+  return vscode.languages.registerInlineValuesProvider(GAP_SELECTOR, new GapInlineValuesProvider());
 }
 
 class GapHoverProvider {
@@ -215,6 +224,89 @@ class GapHoverProvider {
       this.analysisCache.set(key, analysis);
     }
     return analysis.hoverAt(position.line, position.character);
+  }
+}
+
+class GapInlineValuesProvider {
+  provideInlineValues(document, viewPort, context) {
+    return gapInlineValuesForDocument(document, viewPort, context);
+  }
+}
+
+function gapInlineValuesForDocument(document, viewPort, context) {
+  if (!document || document.languageId !== "gap" || typeof vscode.InlineValueVariableLookup !== "function") {
+    return [];
+  }
+
+  const values = [];
+  const seen = new Set();
+  const firstLine = Math.max(0, viewPort && viewPort.start ? viewPort.start.line : 0);
+  const lastLine = inlineValuesLastLine(document, viewPort, context);
+
+  for (const target of assignmentTargetsInDocument(document, firstLine, lastLine)) {
+    const key = `${target.line}:${target.name}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+
+    const range = new vscode.Range(
+      new vscode.Position(target.line, target.startCharacter),
+      new vscode.Position(target.line, target.endCharacter)
+    );
+    values.push(new vscode.InlineValueVariableLookup(range, target.name, true));
+  }
+
+  return values;
+}
+
+function inlineValuesLastLine(document, viewPort, context) {
+  const documentLastLine = Math.max(0, document.lineCount - 1);
+  const viewportLastLine = viewPort && viewPort.end ? Math.min(documentLastLine, viewPort.end.line) : documentLastLine;
+  const stoppedLine = context && context.stoppedLocation && context.stoppedLocation.start
+    ? context.stoppedLocation.start.line
+    : undefined;
+  return Number.isInteger(stoppedLine) ? Math.min(viewportLastLine, stoppedLine) : viewportLastLine;
+}
+
+function assignmentTargetsInDocument(document, firstLine, lastLine) {
+  const ast = parseGapSource(document.getText());
+  const targets = [];
+  collectAssignmentTargets(ast.statements || [], targets);
+  return targets
+    .map((target) => {
+      const start = document.positionAt(target.nameStart);
+      const end = document.positionAt(target.nameEnd);
+      return {
+        name: target.name,
+        line: start.line,
+        startCharacter: start.character,
+        endCharacter: end.character
+      };
+    })
+    .filter((target) => target.line >= firstLine && target.line <= lastLine);
+}
+
+function collectAssignmentTargets(statements, targets) {
+  for (const statement of statements || []) {
+    if (statement.type === "assignment" && statement.name) {
+      targets.push({
+        name: statement.name,
+        nameStart: statement.nameStart,
+        nameEnd: statement.nameEnd
+      });
+    }
+
+    if (statement.type === "functionAssignment") {
+      collectAssignmentTargets(statement.body, targets);
+    } else if (statement.type === "ifStatement") {
+      for (const branch of statement.branches || []) {
+        collectAssignmentTargets(branch.body, targets);
+      }
+      collectAssignmentTargets(statement.elseBody, targets);
+    } else if (statement.type === "forStatement" || statement.type === "whileStatement" || statement.type === "repeatStatement") {
+      collectAssignmentTargets(statement.body, targets);
+    }
   }
 }
 
@@ -715,6 +807,7 @@ module.exports = {
   __test: {
     currentFileBreakpoints,
     debugCurrentFile,
+    gapInlineValuesForDocument,
     groupEntries,
     resolveManualFilePath
   },

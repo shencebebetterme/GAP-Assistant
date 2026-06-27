@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.33
+
+- Added inline debug values for GAP assignment targets while paused.
+- Skipped function definitions and record fields when placing inline debug values.
+
 ## 0.3.32
 
 - Kept debug hover from overriding static GAP hovers for functions and uncaptured GAP symbols.
