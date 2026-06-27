@@ -11,6 +11,8 @@ const REQUIRED_FILES = [
   "language-configuration.json",
   "syntaxes/gap.tmLanguage.json",
   "data/gap-declarations.json",
+  "debug/gapDebugAdapter.js",
+  "debug/instrumenter.js",
   "server/analyzer.js",
   "server/parser.js",
   "server/lsp-server.js",
@@ -45,6 +47,12 @@ function main() {
     if (!packageJson.contributes || !Array.isArray(packageJson.contributes.grammars)) {
       failures.push("package.json must contribute a TextMate grammar");
     }
+    const debuggers = packageJson.contributes && Array.isArray(packageJson.contributes.debuggers)
+      ? packageJson.contributes.debuggers
+      : [];
+    if (!debuggers.some((debuggerContribution) => debuggerContribution.type === "gap" && debuggerContribution.program === "./debug/gapDebugAdapter.js")) {
+      failures.push("package.json must contribute the GAP debug adapter");
+    }
   }
 
   if (languageConfiguration && !languageConfiguration.comments) {
@@ -64,12 +72,16 @@ function main() {
     "server/analyzer.js",
     "server/parser.js",
     "server/lsp-server.js",
+    "debug/gapDebugAdapter.js",
+    "debug/instrumenter.js",
     "src/lspClient.js",
     "scripts/test-parser.js",
     "scripts/test-analyzer.js",
     "scripts/test-extension-helpers.js",
     "scripts/test-lsp-server.js",
-    "scripts/test-lsp-client.js"
+    "scripts/test-lsp-client.js",
+    "scripts/test-debug-instrumenter.js",
+    "scripts/test-debug-adapter.js"
   ]) {
     try {
       childProcess.execFileSync(process.execPath, ["--check", path.join(ROOT, file)], {

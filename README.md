@@ -11,6 +11,7 @@ Features:
 - Structured hovers with section headings, styled inline code, grouped signatures, and GAP examples from the manual.
 - Static GAP inference hovers for globals, locals, functions, return values, input filters, filter sets, and container structure.
 - Local stdio GAP language server used by the extension for inference hovers.
+- Experimental VS Code debugger for `.g` files with line breakpoints, statement-level stepping, runtime variables, and hover/watch evaluation for captured variable names.
 - Fault-tolerant parser-backed analysis for assignments, local declarations, user functions, returns, branches, and loop bodies.
 - Basic static diagnostics for likely runtime errors, including obvious invalid operator uses such as string-plus-integer arithmetic.
 - Hover links that open the configured local manual page.
@@ -100,6 +101,24 @@ node scripts/extract-gap-docs.js "C:\path\to\gap\doc\ref"
 Set `GAP_DOCS_INCLUDE_PACKAGES=0` before running the extractor if you only want the core reference manual.
 
 Hover links open the exact local manual section anchor, for example `chap39.html#X7B75879B8085120A` or `pkg/ace/htm/CHAP001.htm#SSEC002.1`.
+
+## Debug GAP Files
+
+Open a `.g` file and choose **Run and Debug: Debug GAP File**, or create a launch configuration:
+
+```json
+{
+  "type": "gap",
+  "request": "launch",
+  "name": "Debug GAP File",
+  "program": "${file}",
+  "stopOnEntry": false
+}
+```
+
+On Windows, the debug adapter defaults to `wsl gap -q -x 100000`. On other platforms it defaults to `gap -q -x 100000`. Override `gapCommand` and `gapArgs` in `launch.json` if GAP is installed somewhere else.
+
+The debugger runs an instrumented temporary copy of the current source file. Breakpoints are mapped to executable GAP statements, stepping is statement-level for user `.g` code, and the Variables panel plus hover/watch evaluation show runtime values for variables visible to the inserted probes. Arbitrary GAP expression evaluation and precise stepping inside GAP kernel or compiled library internals are not currently supported.
 
 ## Validate
 
