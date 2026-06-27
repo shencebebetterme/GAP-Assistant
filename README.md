@@ -25,7 +25,7 @@ code --extensionDevelopmentPath "C:\Users\Ce\Documents\codex_playground\GAP_fron
 
 Open `examples/sample.g`, then hover names such as `SymmetricGroup`, `Size`, or `IsGroup`.
 
-Static inference is filter-centric. A GAP value is shown with every filter the analyzer can infer, for example `SymmetricGroup(4)` is a group object satisfying filters such as `IsGroup`, `IsPermGroup`, and `IsFinite`; this avoids pretending GAP has a single classical OO inheritance type. Hovers use a compact signature block and show inferred container details such as `list[positive integer]` or record fields like `count: integer`.
+Static inference is filter-centric. A GAP value is modeled with every filter the analyzer can infer, for example `SymmetricGroup(4)` is a group object satisfying filters such as `IsGroup`, `IsPermGroup`, and `IsFinite`; this avoids pretending GAP has a single classical OO inheritance type. Hovers show the most useful result as a compact highlighted snippet, with inferred container details such as `list[positive integer]` or record fields like `count: integer` kept in a terse structure section.
 
 User-defined functions also get best-effort input filters. For example, if a parameter is passed to `Size(obj)` or `GeneratorsOfGroup(obj)`, the hover can show GAP declaration filters such as `IsListOrCollection` or `IsMagmaWithInverses`; if the function is later called with `SymmetricGroup(4)`, those call-site filters are merged as additional evidence.
 

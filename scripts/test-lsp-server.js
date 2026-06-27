@@ -142,7 +142,7 @@ async function main() {
 
   const hover = await waitForResponse(2);
   assert(hover.result.contents.value.includes("GAP inference"), "hover should include static inference");
-  assert(hover.result.contents.value.includes("IsPermGroup"), "hover should include inferred GAP filters");
+  assert(hover.result.contents.value.includes("G := symmetric permutation group;"), "hover should include inferred GAP type");
   assert(!hover.result.contents.value.includes("Source:"), "hover should not include internal source lines");
   assert(!hover.result.contents.value.includes("Confidence:"), "hover should not include confidence lines");
 
@@ -161,8 +161,8 @@ async function main() {
   });
 
   const stringHover = await waitForResponse(4);
-  assert(stringHover.result.contents.value.includes("`string`"), "hover should infer string literal assignments");
-  assert(stringHover.result.contents.value.includes("IsString"), "hover should include IsString filter");
+  assert(stringHover.result.contents.value.includes("str := string;"), "hover should infer string literal assignments");
+  assert(!stringHover.result.contents.value.includes("IsString"), "hover should not repeat string filters");
 
   send({
     id: 6,
@@ -179,8 +179,8 @@ async function main() {
   });
 
   const sizeHover = await waitForResponse(6);
-  assert(sizeHover.result.contents.value.includes("Input filters"), "hover should include declaration input filters");
-  assert(sizeHover.result.contents.value.includes("IsListOrCollection"), "hover should include Size input filter");
+  assert(sizeHover.result.contents.value.includes("Size(listorcoll: IsListOrCollection)"), "hover signature should include Size input filter");
+  assert(!sizeHover.result.contents.value.includes("Input filters"), "hover should not repeat declaration input filters");
 
   send({
     id: 5,
@@ -197,9 +197,7 @@ async function main() {
   });
 
   const functionHover = await waitForResponse(5);
-  assert(functionHover.result.contents.value.includes("Input filters"), "function hover should include inferred input filters");
-  assert(functionHover.result.contents.value.includes("IsListOrCollection"), "function hover should include body-derived parameter filters");
-  assert(functionHover.result.contents.value.includes("IsPermGroup"), "function hover should include call-site parameter filters");
+  assert(functionHover.result.contents.value.includes("uses(obj: permutation group)"), "function hover should include inferred input type in the signature");
   assert(!functionHover.result.contents.value.includes("Source:"), "function hover should not include internal source lines");
 
   send({ id: 3, method: "shutdown", params: null });

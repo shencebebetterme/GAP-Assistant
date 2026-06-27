@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.18
+
+- Rendered variable and function inference hovers with the same highlighted snippet style.
+- Removed redundant top-level `Type`, `Filters`, `Inputs`, and `Input filters` rows from inference hovers.
+- Kept list element and record field details in a terse `Structure` section.
+
 ## 0.3.17
 
 - Restyled static inference hovers with a compact code-style signature block.

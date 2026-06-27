@@ -89,10 +89,13 @@ assert(
   "GeneratorsOfGroup should resolve synonym declaration input filters"
 );
 const builtinMarkdown = formatInferenceMarkdown(hoverBuiltin);
-assert(builtinMarkdown.includes("- `G`: `IsMagmaWithInverses`"), "input filters should use signature parameter names");
 assert(builtinMarkdown.includes("#### GAP inference"), "static hover should use the inference title");
 assert(builtinMarkdown.includes("```gap"), "static hover should include a compact signature code block");
-assert(builtinMarkdown.includes("(system function) GeneratorsOfGroup(G: IsMagmaWithInverses) -> list"), "documented hover should show a readable signature line");
+assert(builtinMarkdown.includes("# system function"), "documented hover should show the callable scope");
+assert(builtinMarkdown.includes("GeneratorsOfGroup(G: IsMagmaWithInverses) -> list;"), "documented hover should show a readable signature line");
+assert(!builtinMarkdown.includes("**Type**"), "static hover should not repeat the signature type");
+assert(!builtinMarkdown.includes("**Filters**"), "static hover should not repeat top-level filters");
+assert(!builtinMarkdown.includes("Input filters"), "static hover should not repeat signature input filters");
 assert(!builtinMarkdown.includes("Source:"), "static hover should not include internal source lines");
 assert(!builtinMarkdown.includes("Documentation return hint"), "static hover should not include documentation return hints");
 assert(!builtinMarkdown.includes("Confidence:"), "static hover should not include confidence lines");
@@ -100,8 +103,8 @@ assert(!builtinMarkdown.includes("Confidence:"), "static hover should not includ
 const hoverString = analyzer.hoverAt('str := "hello";', 0, 1);
 const stringMarkdown = formatInferenceMarkdown(hoverString);
 assert(hoverString.symbol.type.filters.includes("IsString"), "hover at a string assignment should infer IsString");
-assert(stringMarkdown.includes("(global) str: string"), "string hover should include a readable value signature");
-assert(stringMarkdown.includes("`string`"), "string hover should include terse type label");
+assert(stringMarkdown.includes("# global variable"), "string hover should include the variable scope");
+assert(stringMarkdown.includes("str := string;"), "string hover should include a readable value signature");
 
 const containerHoverSample = [
   "values := List([1 .. 5], i -> Factorial(i));",
@@ -111,11 +114,12 @@ const containerHoverSample = [
 const containerHoverAnalysis = analyzer.analyze(containerHoverSample, "memory://container-hover.g");
 const valuesHover = containerHoverAnalysis.hoverAt(0, 1);
 const valuesMarkdown = formatInferenceMarkdown(valuesHover);
-assert(valuesMarkdown.includes("(global) values: list[positive integer]"), "list hover should show the element type in its signature");
+assert(valuesMarkdown.includes("values := list[positive integer];"), "list hover should show the element type in its signature");
 assert(valuesMarkdown.includes("- element: `positive integer`"), "list hover should include a structure element row");
 const infoHover = containerHoverAnalysis.hoverAt(1, 1);
 const infoMarkdown = formatInferenceMarkdown(infoHover);
-assert(infoMarkdown.includes("count: nonnegative integer"), "record hover signature should show field types");
+assert(infoMarkdown.includes("info := record;"), "record hover signature should show record type");
+assert(infoMarkdown.includes("`count`: `nonnegative integer`"), "record hover should show integer field types");
 assert(infoMarkdown.includes("`name`: `string`"), "record hover should show string field types");
 assert(infoMarkdown.includes("`first`: `positive integer`"), "record hover should preserve selected list element field types");
 

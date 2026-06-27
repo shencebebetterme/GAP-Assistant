@@ -6,7 +6,6 @@ const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TERMINATING_CALLS = new Set(["ErrorNoReturn", "TryNextMethod"]);
 const HOVER_WRAP_COLUMN = 88;
 const MAX_HOVER_FIELDS = 8;
-const MAX_SIGNATURE_FIELDS = 4;
 
 const HARD_CODED_CALLS = {
   AlternatingGroup: callType("alternating permutation group", ["IsObject", "IsCollection", "IsMagma", "IsGroup", "IsPermGroup", "IsFinite"], "constructor"),
@@ -2546,36 +2545,12 @@ function formatInferenceMarkdown(hover) {
   lines.push("```", "");
 
   if (!isFunctionType(type)) {
-    lines.push(`**Type** ${codeSpan(formatTypeExpression(type))}`, "");
+    appendStructureDetails(lines, type, "**Structure**");
   }
-
-  appendTypeDetails(lines, type);
 
   if (returnType) {
-    lines.push(`**Returns** ${codeSpan(formatTypeExpression(returnType))}${formatInlineFilters(returnType.filters)}`, "");
+    lines.push(`**Returns** ${codeSpan(formatTypeExpression(returnType))}`, "");
     appendStructureDetails(lines, returnType, "**Return structure**");
-  }
-
-  if (symbol.parameters && symbol.parameters.length > 0) {
-    lines.push("**Parameters**");
-    for (const parameter of symbol.parameters) {
-      lines.push(`- ${codeSpan(parameter.name)}: ${codeSpan(formatTypeExpression(parameter.type))}${formatInlineFilters(parameter.type && parameter.type.filters)}`);
-    }
-    lines.push("");
-  } else if (type && type.parameters && type.parameters.length > 0) {
-    lines.push(`**Inputs** ${type.parameters.map(codeSpan).join(", ")}`, "");
-  }
-
-  if (type && type.parameterTypes && type.parameterTypes.length > 0) {
-    lines.push("**Input filters**");
-    type.parameterTypes.forEach((parameterType, index) => {
-      const filters = parameterType.filters && parameterType.filters.length > 0
-        ? parameterType.filters.map((filter) => `\`${filter}\``).join(", ")
-        : "`IsObject`";
-      const name = type.parameters && type.parameters[index] ? type.parameters[index] : `arg${index + 1}`;
-      lines.push(`- ${codeSpan(name)}: ${filters}`);
-    });
-    lines.push("");
   }
 
   if (type && type.declarations && type.declarations.length > 0) {
@@ -2598,45 +2573,38 @@ function formatInferenceSignatureLines(symbol, type, displayName) {
 function formatFunctionSignatureLines(scope, displayName, symbol, type) {
   const returnType = symbol.returnType || (type && type.returnType);
   const params = signatureParameterEntries(symbol, type);
-  const prefix = `(${scope} function) ${displayName}`;
+  const lines = [`# ${scope} function`];
   const returnExpression = formatTypeExpression(returnType);
   const inlineParams = params.map(formatSignatureParameter).join(", ");
-  const inline = `${prefix}(${inlineParams}) -> ${returnExpression}`;
+  const inline = `${displayName}(${inlineParams}) -> ${returnExpression};`;
   if (inline.length <= HOVER_WRAP_COLUMN && params.length <= 2) {
-    return [inline];
+    lines.push(inline);
+    return lines;
   }
 
-  const lines = [`${prefix}(`];
+  lines.push(`${displayName}(`);
   params.forEach((parameter, index) => {
     const suffix = index === params.length - 1 ? "" : ",";
     lines.push(`    ${formatSignatureParameter(parameter)}${suffix}`);
   });
-  lines.push(`) -> ${returnExpression}`);
+  lines.push(`) -> ${returnExpression};`);
   return lines;
 }
 
 function formatValueSignatureLines(scope, displayName, type) {
-  const prefix = `(${scope}) ${displayName}`;
+  const lines = [`# ${scope} variable`];
   const expression = formatTypeExpression(type);
-  const inline = `${prefix}: ${expression}`;
-  if (inline.length <= HOVER_WRAP_COLUMN && !(type && type.fields && Object.keys(type.fields).length > 0)) {
-    return [inline];
+  const inline = `${displayName} := ${expression};`;
+  if (inline.length <= HOVER_WRAP_COLUMN) {
+    lines.push(inline);
+    return lines;
   }
 
-  const lines = [`${prefix}: ${formatBaseTypeLabel(type)}`];
+  lines.push(`${displayName} := ${formatBaseTypeLabel(type)}`);
   if (type && type.element) {
-    lines.push(`    element: ${formatTypeExpression(type.element)}`);
+    lines.push(`    [${formatTypeExpression(type.element)}]`);
   }
-  if (type && type.fields) {
-    const fieldEntries = Object.entries(type.fields).slice(0, MAX_SIGNATURE_FIELDS);
-    for (const [name, fieldType] of fieldEntries) {
-      lines.push(`    ${name}: ${formatTypeExpression(fieldType)}`);
-    }
-    const remaining = Object.keys(type.fields).length - fieldEntries.length;
-    if (remaining > 0) {
-      lines.push(`    ... ${remaining} more fields`);
-    }
-  }
+  lines[lines.length - 1] = `${lines[lines.length - 1]};`;
   return lines;
 }
 
@@ -2675,14 +2643,6 @@ function formatSignatureType(type) {
   return formatTypeExpression(type);
 }
 
-function appendTypeDetails(lines, type, options = {}) {
-  if (!type) {
-    return;
-  }
-  appendFilterLine(lines, type.filters, options.filterLabel || "**Filters**");
-  appendStructureDetails(lines, type, options.structureLabel || "**Structure**");
-}
-
 function appendStructureDetails(lines, type, label) {
   const structureLines = formatStructureLines(type);
   if (structureLines.length === 0) {
@@ -2693,21 +2653,15 @@ function appendStructureDetails(lines, type, label) {
   lines.push("");
 }
 
-function appendFilterLine(lines, filters, label) {
-  if (filters && filters.length > 0) {
-    lines.push(`${label}: ${filters.map((filter) => `\`${filter}\``).join(", ")}`, "");
-  }
-}
-
 function formatStructureLines(type) {
   const lines = [];
   if (type.element) {
-    lines.push(`- element: ${codeSpan(formatTypeExpression(type.element))}${formatInlineFilters(type.element.filters)}`);
+    lines.push(`- element: ${codeSpan(formatTypeExpression(type.element))}`);
   }
   if (type.fields) {
     const fieldEntries = Object.entries(type.fields).slice(0, MAX_HOVER_FIELDS);
     for (const [name, fieldType] of fieldEntries) {
-      lines.push(`- ${codeSpan(name)}: ${codeSpan(formatTypeExpression(fieldType))}${formatInlineFilters(fieldType && fieldType.filters)}`);
+      lines.push(`- ${codeSpan(name)}: ${codeSpan(formatTypeExpression(fieldType))}`);
     }
     const remaining = Object.keys(type.fields).length - fieldEntries.length;
     if (remaining > 0) {
@@ -2715,12 +2669,6 @@ function formatStructureLines(type) {
     }
   }
   return lines;
-}
-
-function formatInlineFilters(filters) {
-  return filters && filters.length > 0
-    ? ` · ${filters.map((filter) => `\`${filter}\``).join(", ")}`
-    : "";
 }
 
 function scopeLabel(scope) {
