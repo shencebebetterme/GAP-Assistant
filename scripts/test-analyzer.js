@@ -377,6 +377,44 @@ assert(guardHover.symbol.type.filters.includes("IsString"), "hover after a guard
 const guardFlow = guardFlowAnalysis.scopes[0].symbols.get("guardFlow");
 assert(guardFlow && guardFlow.returnType.filters.includes("IsString"), "return after a guard should use fallthrough flow");
 
+const negatedBranchFlowSample = [
+  "elseFlow := function(obj)",
+  "    if not IsString(obj) then",
+  "        return [];",
+  "    else",
+  "        bad := obj + 1;",
+  "        return obj;",
+  "    fi;",
+  "end;",
+  "",
+  "elifFlow := function(obj)",
+  "    if not IsGroup(obj) then",
+  "        return [];",
+  "    elif IsBool(obj) then",
+  "        return obj;",
+  "    else",
+  "        bad := obj + 1;",
+  "        return GeneratorsOfGroup(obj);",
+  "    fi;",
+  "end;",
+  ""
+].join("\n");
+const negatedBranchFlowAnalysis = analyzer.analyze(negatedBranchFlowSample, "memory://negated-branch-flow.g");
+const negatedBranchDiagnostics = negatedBranchFlowAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "operator-type");
+assert.strictEqual(negatedBranchDiagnostics.length, 2, "false branches of negated predicates should refine later branch scopes");
+assert(negatedBranchDiagnostics[0].message.includes("left operand is string"), "else branch diagnostic should use the negated-if false path");
+assert.strictEqual(negatedBranchDiagnostics[0].range.start.line, 4, "else branch diagnostic should point inside the else body");
+assert(negatedBranchDiagnostics[1].message.includes("left operand is group"), "elif fallthrough diagnostic should carry prior negated filter evidence");
+assert.strictEqual(negatedBranchDiagnostics[1].range.start.line, 15, "elif fallthrough diagnostic should point inside the final else body");
+const elseHover = negatedBranchFlowAnalysis.hoverAt(4, 16);
+assert(elseHover && elseHover.symbol.name === "obj", "hover inside else should resolve the refined parameter");
+assert(elseHover.symbol.type.filters.includes("IsString"), "else hover should include the negated-if false-path filter");
+const elifElseHover = negatedBranchFlowAnalysis.hoverAt(15, 16);
+assert(elifElseHover && elifElseHover.symbol.name === "obj", "hover inside elif final else should resolve the refined parameter");
+assert(elifElseHover.symbol.type.filters.includes("IsGroup"), "elif final else hover should include earlier negated predicate evidence");
+const negatedBranchCallDiagnostics = negatedBranchFlowAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "call-argument-filter");
+assert.strictEqual(negatedBranchCallDiagnostics.length, 0, "prior negated branch flow should make group-only calls compatible in later branches");
+
 const terminatingGuardSample = [
   "hardGuard := function(obj)",
   "    if not IsString(obj) then",

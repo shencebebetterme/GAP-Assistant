@@ -35,6 +35,8 @@ Selector inference follows GAP's term-level selector behavior. The analyzer can 
 
 The analyzer also performs limited branch-sensitive filter flow. Inside a guarded block such as `if IsString(obj) then`, hovers, return inference, and operator diagnostics use `IsString` as evidence for `obj` in that branch.
 
+Negated predicates are tracked on the false path when they can be represented positively. For example, inside the `else` branch of `if not IsString(obj) then ... else ... fi`, the analyzer treats `obj` as satisfying `IsString`; the same evidence is carried through later `elif` and `else` branches.
+
 Call checking uses GAP declaration filters where available. For example, `GeneratorsOfGroup(5);` is reported because `GeneratorsOfGroup` resolves to a declaration requiring `IsMagmaWithInverses`, while a call guarded by `if IsGroup(obj) then` is treated as compatible in that branch.
 
 The same compatibility check is applied to user-defined functions once their parameter filters have been inferred from the function body. For example, a function that calls `GeneratorsOfGroup(obj)` learns that `obj` should be group-like, and later calls with clearly incompatible arguments are reported without feeding that bad evidence back into the function contract.

@@ -240,21 +240,26 @@ function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, 
 }
 
 function analyzeIfStatementNode(statement, parentScope, data, functions, text, masked, lineStarts, scopes) {
+  const fallthroughRefinements = [];
+
   for (const branch of statement.branches || []) {
     const scope = createBranchScope("if branch", branch.body || [], parentScope, lineStarts, branch.condition);
     branch.scope = scope;
     scopes.push(scope);
+    applyRefinementsToScope(fallthroughRefinements, scope, branch.condition ? branch.condition.start : statement.start);
     if (branch.condition && branch.condition.text) {
       inferExpression(branch.condition.text, parentScope, data, branch.condition.start);
     }
     applyPredicateRefinements(branch.condition && branch.condition.text, scope, data, branch.condition && branch.condition.start);
     analyzeStatements(branch.body || [], scope, data, functions, text, masked, lineStarts, scopes);
+    fallthroughRefinements.push(...negatedPredicateRefinements(branch.condition && branch.condition.text, data));
   }
 
   if (statement.elseBody && statement.elseBody.length > 0) {
     const scope = createBranchScope("else branch", statement.elseBody, parentScope, lineStarts);
     statement.elseScope = scope;
     scopes.push(scope);
+    applyRefinementsToScope(fallthroughRefinements, scope, statement.elseBody[0].start);
     analyzeStatements(statement.elseBody, scope, data, functions, text, masked, lineStarts, scopes);
   }
 }

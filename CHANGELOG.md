@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.13
+
+- Carried positive filter evidence from failed negated predicates into later `elif` and `else` branches.
+- Used false-branch flow from conditions such as `if not IsString(obj) then ... else ... fi` for hovers, return inference, operator diagnostics, and call checks.
+
 ## 0.3.12
 
 - Added selector inference for list indexing, sublist selection, string indexing/slicing, and record fields.
