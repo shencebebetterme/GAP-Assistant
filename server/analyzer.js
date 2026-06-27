@@ -252,7 +252,8 @@ function analyzeIfStatementNode(statement, parentScope, data, functions, text, m
     scopes.push(scope);
     applyRefinementsToScope(fallthroughRefinements, scope, branch.condition ? branch.condition.start : statement.start);
     if (branch.condition && branch.condition.text) {
-      inferExpression(branch.condition.text, parentScope, data, branch.condition.start);
+      const conditionType = inferExpression(branch.condition.text, parentScope, data, branch.condition.start);
+      reportConditionDiagnostic(branch.kind === "elif" ? "elif" : "if", branch.condition, conditionType, data);
     }
     applyPredicateRefinements(branch.condition && branch.condition.text, scope, data, branch.condition && branch.condition.start);
     analyzeStatements(branch.body || [], scope, data, functions, text, masked, lineStarts, scopes);
@@ -419,7 +420,8 @@ function analyzeForStatementNode(statement, parentScope, data, functions, text, 
 
 function analyzeWhileStatementNode(statement, parentScope, data, functions, text, masked, lineStarts, scopes) {
   if (statement.condition && statement.condition.text) {
-    inferExpression(statement.condition.text, parentScope, data, statement.condition.start);
+    const conditionType = inferExpression(statement.condition.text, parentScope, data, statement.condition.start);
+    reportConditionDiagnostic("while", statement.condition, conditionType, data);
   }
 
   const scope = createPredicateLoopScope("while loop", statement, parentScope, lineStarts);
@@ -436,7 +438,8 @@ function analyzeRepeatStatementNode(statement, parentScope, data, functions, tex
   analyzeStatements(statement.body || [], scope, data, functions, text, masked, lineStarts, scopes);
 
   if (statement.condition && statement.condition.text) {
-    inferExpression(statement.condition.text, scope, data, statement.condition.start);
+    const conditionType = inferExpression(statement.condition.text, scope, data, statement.condition.start);
+    reportConditionDiagnostic("repeat-until", statement.condition, conditionType, data);
   }
 }
 
@@ -1840,6 +1843,20 @@ function reportUnassignedLocalRead(symbol, data, offset, length) {
     length,
     `Local variable ${symbol.name} may fail: it is read before it has an assigned value.`,
     { code: "unassigned-local", severity: 2 }
+  );
+}
+
+function reportConditionDiagnostic(kind, condition, type, data) {
+  if (!condition || !condition.text || !isClearlyNonBoolean(type)) {
+    return;
+  }
+
+  reportDiagnostic(
+    data,
+    condition.start,
+    Math.max(1, condition.text.length),
+    `${kind} condition may fail: expected boolean, got ${formatTypeLabel(type)}.`,
+    { code: "condition-type", severity: 2 }
   );
 }
 

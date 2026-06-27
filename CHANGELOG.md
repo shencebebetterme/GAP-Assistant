@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.16
+
+- Added diagnostics for clearly non-boolean `if`, `elif`, `while`, and `repeat ... until` conditions.
+- Left unknown condition types alone, so user parameters and possible globals are not over-reported.
+
 ## 0.3.15
 
 - Propagated definite local assignment through exhaustive `if`/`elif`/`else` branches.

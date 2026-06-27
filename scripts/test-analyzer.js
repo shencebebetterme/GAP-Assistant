@@ -156,6 +156,41 @@ assert(operatorSemanticMessages.some((message) => message.includes("Operator mod
 assert(operatorSemanticMessages.some((message) => message.includes("Operator ^ may fail")), "power should reuse arithmetic diagnostics");
 assert(operatorSemanticMessages.some((message) => message.includes("Operator ^ is not associative")), "power should diagnose GAP's non-associative syntax");
 
+const conditionTypeSample = [
+  "conditionChecks := function(flag)",
+  "    if 3 then",
+  "        return 1;",
+  "    elif \"bad\" then",
+  "        return 2;",
+  "    elif flag then",
+  "        return 3;",
+  "    fi;",
+  "    while [1] do",
+  "        return 4;",
+  "    od;",
+  "    repeat",
+  "        marker := 1;",
+  "    until 5;",
+  "    return 0;",
+  "end;",
+  ""
+].join("\n");
+const conditionTypeAnalysis = analyzer.analyze(conditionTypeSample, "memory://condition-types.g");
+const conditionDiagnostics = conditionTypeAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "condition-type");
+assert.strictEqual(conditionDiagnostics.length, 4, "clearly non-boolean control-flow conditions should be diagnosed");
+assert(conditionDiagnostics[0].message.includes("if condition may fail"), "if diagnostic should identify the condition kind");
+assert(conditionDiagnostics[0].message.includes("got integer"), "if diagnostic should include the inferred type");
+assert.strictEqual(conditionDiagnostics[0].range.start.line, 1, "if diagnostic should point at the condition expression");
+assert(conditionDiagnostics[1].message.includes("elif condition may fail"), "elif diagnostic should identify the condition kind");
+assert(conditionDiagnostics[1].message.includes("got string"), "elif diagnostic should include the inferred type");
+assert.strictEqual(conditionDiagnostics[1].range.start.line, 3, "elif diagnostic should point at the condition expression");
+assert(conditionDiagnostics[2].message.includes("while condition may fail"), "while diagnostic should identify the condition kind");
+assert(conditionDiagnostics[2].message.includes("got list"), "while diagnostic should include the inferred type");
+assert.strictEqual(conditionDiagnostics[2].range.start.line, 8, "while diagnostic should point at the condition expression");
+assert(conditionDiagnostics[3].message.includes("repeat-until condition may fail"), "repeat-until diagnostic should identify the condition kind");
+assert(conditionDiagnostics[3].message.includes("got integer"), "repeat-until diagnostic should include the inferred type");
+assert.strictEqual(conditionDiagnostics[3].range.start.line, 13, "repeat-until diagnostic should point at the condition expression");
+
 const selectorSample = [
   "G := SymmetricGroup(4);",
   "gens := GeneratorsOfGroup(G);",

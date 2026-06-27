@@ -31,6 +31,8 @@ User-defined functions also get best-effort input filters. For example, if a par
 
 Operator inference currently covers common arithmetic, comparison, boolean, membership, `mod`, and power forms following the precedence in GAP's reader. For example `m := n + 10;` can infer `m` as an integer after `n := 5;`, while `b := "hello" + 2;`, `not 3`, `1 in 5`, or `2 ^ 3 ^ 4` are reported as likely operator errors.
 
+Control-flow conditions are checked when their type is clear. Expressions such as `if 3 then`, `elif "bad" then`, `while [1] do`, and `repeat ... until 5` are reported because GAP expects boolean conditions.
+
 Selector inference follows GAP's term-level selector behavior. The analyzer can infer element filters for `gens[1]`, preserve element filters through `gens{[1]}`, infer characters and strings from string selectors, and use record literal field types for expressions such as `rec(count := 3).count`. Clear selector mistakes such as `5[1]`, `gens["x"]`, `gens{1}`, or `[1, 2].name` are reported.
 
 Declared local variables are tracked for definite assignment. If a function declares `local value;` and then reads `value` before assigning to it, the checker reports the likely GAP runtime error; unknown identifiers that may be globals are still left alone.
