@@ -7,6 +7,7 @@ The extension parser is modeled against the installed GAP 4.15.1 reader and scan
 - `src/read.c` is GAP's recursive-descent reader:
   - `ReadLiteral`, `ReadTerm`, `ReadAri`, `ReadRel`, `ReadAnd`, and `ReadExpr` define expression precedence.
   - `ReadFactor`, `ReadTerm`, and `ReadRel` define `^`, `mod`, repeated `not`, and membership `in`; chained top-level `^` is rejected as non-associative.
+  - `ReadSelector` and `ReadReferenceModifiers` define chained calls, list selectors, sublist selectors, and record selectors as term-level modifiers.
   - `ReadIf` defines `if`/`elif`/`else`/`fi`.
   - `ReadReturn` defines `return [ <Expr> ];`.
   - `ReadStats` documents the statement forms handled by the reader.

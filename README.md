@@ -31,6 +31,8 @@ User-defined functions also get best-effort input filters. For example, if a par
 
 Operator inference currently covers common arithmetic, comparison, boolean, membership, `mod`, and power forms following the precedence in GAP's reader. For example `m := n + 10;` can infer `m` as an integer after `n := 5;`, while `b := "hello" + 2;`, `not 3`, `1 in 5`, or `2 ^ 3 ^ 4` are reported as likely operator errors.
 
+Selector inference follows GAP's term-level selector behavior. The analyzer can infer element filters for `gens[1]`, preserve element filters through `gens{[1]}`, infer characters and strings from string selectors, and use record literal field types for expressions such as `rec(count := 3).count`. Clear selector mistakes such as `5[1]`, `gens["x"]`, `gens{1}`, or `[1, 2].name` are reported.
+
 The analyzer also performs limited branch-sensitive filter flow. Inside a guarded block such as `if IsString(obj) then`, hovers, return inference, and operator diagnostics use `IsString` as evidence for `obj` in that branch.
 
 Call checking uses GAP declaration filters where available. For example, `GeneratorsOfGroup(5);` is reported because `GeneratorsOfGroup` resolves to a declaration requiring `IsMagmaWithInverses`, while a call guarded by `if IsGroup(obj) then` is treated as compatible in that branch.

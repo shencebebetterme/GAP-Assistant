@@ -988,15 +988,22 @@ function inferExpression(expression, scope, data, expressionOffset = 0) {
   if (/^-?\d+\s*\/\s*-?\d+$/.test(expr)) {
     return typeInfo("rational", ["IsObject", "IsRat"], { confidence: "literal" });
   }
+  if (/^'(?:\\.|[^'\\])'$/.test(expr)) {
+    return typeInfo("character", ["IsObject", "IsChar"], { confidence: "literal" });
+  }
   if (/^"(?:\\.|[^"\\])*"$/.test(expr)) {
     return typeInfo("string", ["IsObject", "IsString", "IsList"], { confidence: "literal" });
+  }
+  const selector = parseSelectorExpression(expr);
+  if (selector) {
+    return inferSelectorExpression(selector, scope, data, expressionOffset);
   }
   if (/^\[.*\]$/.test(expr)) {
     const element = inferListElementType(expr, scope, data, expressionOffset);
     return typeInfo("list", ["IsObject", "IsCollection", "IsList"], { confidence: "literal", element });
   }
   if (/^rec\s*\(/.test(expr)) {
-    return typeInfo("record", ["IsObject", "IsRecord"], { confidence: "literal" });
+    return inferRecordLiteralType(expr, scope, data, expressionOffset);
   }
   if (/^\([^)]*(?:,\s*\d+)+\)$/.test(expr)) {
     return typeInfo("permutation", ["IsObject", "IsPerm"], { confidence: "literal" });
@@ -1059,6 +1066,312 @@ function inferListElementType(expr, scope, data, expressionOffset = 0) {
     }
     return inferExpression(part, scope, data, partIndex >= 0 ? expressionOffset + partIndex : expressionOffset);
   }).reduce(mergeTypeInfo);
+}
+
+function inferRecordLiteralType(expr, scope, data, expressionOffset = 0) {
+  const match = /^rec\s*\(([\s\S]*)\)$/.exec(expr);
+  if (!match) {
+    return typeInfo("record", ["IsObject", "IsRecord"], { confidence: "literal" });
+  }
+
+  const openIndex = expr.indexOf("(");
+  const fields = {};
+  for (const span of splitTopLevelWithSpans(match[1], ",")) {
+    const fieldMatch = /^\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*:=\s*([\s\S]+?)\s*$/.exec(span.text);
+    if (!fieldMatch) {
+      continue;
+    }
+    const name = fieldMatch[1];
+    const valueStartInSpan = span.text.indexOf(fieldMatch[2]);
+    fields[name] = inferExpression(
+      fieldMatch[2],
+      scope,
+      data,
+      expressionOffset + openIndex + 1 + span.start + valueStartInSpan
+    );
+  }
+
+  return typeInfo("record", ["IsObject", "IsRecord"], {
+    confidence: "literal",
+    fields
+  });
+}
+
+function inferSelectorExpression(selector, scope, data, expressionOffset) {
+  const baseType = inferExpression(selector.base, scope, data, expressionOffset + selector.baseStart);
+
+  if (selector.kind === "index") {
+    return inferIndexSelector(selector, baseType, scope, data, expressionOffset);
+  }
+
+  if (selector.kind === "sublist") {
+    return inferSublistSelector(selector, baseType, scope, data, expressionOffset);
+  }
+
+  if (selector.kind === "record") {
+    return inferRecordSelector(selector, baseType, data, expressionOffset);
+  }
+
+  return typeInfo("unknown selected value", ["IsObject"], { confidence: "selector" });
+}
+
+function inferIndexSelector(selector, baseType, scope, data, expressionOffset) {
+  const argument = selector.arguments[0] || { text: "", start: selector.selectorStart + 1 };
+  const indexType = inferExpression(argument.text, scope, data, expressionOffset + argument.start);
+
+  if (isClearlyInvalidListSelectorBase(baseType)) {
+    reportDiagnostic(
+      data,
+      expressionOffset + selector.selectorStart,
+      1,
+      `List selector may fail: base is ${formatTypeLabel(baseType)}, expected a list or string.`,
+      { code: "selector-type", severity: 2 }
+    );
+  }
+
+  if (isClearlyInvalidListIndex(indexType)) {
+    reportDiagnostic(
+      data,
+      expressionOffset + argument.start,
+      Math.max(1, argument.text.length),
+      `List selector may fail: index is ${formatTypeLabel(indexType)}, expected an integer.`,
+      { code: "selector-type", severity: 2 }
+    );
+  }
+
+  if (hasAnyFilter(baseType, ["IsString"])) {
+    return typeInfo("character", ["IsObject", "IsChar"], { confidence: "selector", source: "string[index]" });
+  }
+
+  return (baseType && baseType.element) || typeInfo("list element", ["IsObject"], { confidence: "selector" });
+}
+
+function inferSublistSelector(selector, baseType, scope, data, expressionOffset) {
+  const positions = selector.arguments[0] || { text: "", start: selector.selectorStart + 1 };
+  const positionsType = inferExpression(positions.text, scope, data, expressionOffset + positions.start);
+
+  if (isClearlyInvalidListSelectorBase(baseType)) {
+    reportDiagnostic(
+      data,
+      expressionOffset + selector.selectorStart,
+      1,
+      `Sublist selector may fail: base is ${formatTypeLabel(baseType)}, expected a list or string.`,
+      { code: "selector-type", severity: 2 }
+    );
+  }
+
+  if (isClearlyInvalidPositionList(positionsType)) {
+    reportDiagnostic(
+      data,
+      expressionOffset + positions.start,
+      Math.max(1, positions.text.length),
+      `Sublist selector may fail: positions are ${formatTypeLabel(positionsType)}, expected a list of positive integers.`,
+      { code: "selector-type", severity: 2 }
+    );
+  }
+
+  if (hasAnyFilter(baseType, ["IsString"])) {
+    return typeInfo("string", ["IsObject", "IsString", "IsList"], { confidence: "selector", source: "string{positions}" });
+  }
+
+  return typeInfo("list", ["IsObject", "IsCollection", "IsList"], {
+    confidence: "selector",
+    source: "list{positions}",
+    element: baseType && baseType.element
+  });
+}
+
+function inferRecordSelector(selector, baseType, data, expressionOffset) {
+  if (isClearlyInvalidRecordSelectorBase(baseType)) {
+    reportDiagnostic(
+      data,
+      expressionOffset + selector.selectorStart,
+      1,
+      `Record selector may fail: base is ${formatTypeLabel(baseType)}, expected a record.`,
+      { code: "selector-type", severity: 2 }
+    );
+  }
+
+  if (baseType && baseType.fields && Object.prototype.hasOwnProperty.call(baseType.fields, selector.field)) {
+    return baseType.fields[selector.field];
+  }
+
+  if (baseType && baseType.fields && !Object.prototype.hasOwnProperty.call(baseType.fields, selector.field)) {
+    reportDiagnostic(
+      data,
+      expressionOffset + selector.fieldStart,
+      Math.max(1, selector.field.length),
+      `Record selector may fail: field ${selector.field} is not known on this record literal.`,
+      { code: "selector-type", severity: 2 }
+    );
+  }
+
+  return typeInfo(`record field ${selector.field}`, ["IsObject"], { confidence: "selector" });
+}
+
+function parseSelectorExpression(expr) {
+  const bracketSelector = parseTrailingBracketSelector(expr, "]", "[", "index")
+    || parseTrailingBracketSelector(expr, "}", "{", "sublist");
+  if (bracketSelector) {
+    return bracketSelector;
+  }
+
+  return parseTrailingRecordSelector(expr);
+}
+
+function parseTrailingBracketSelector(expr, close, open, kind) {
+  if (!expr.endsWith(close)) {
+    return undefined;
+  }
+
+  const openIndex = findMatchingOpeningDelimiter(expr, expr.length - 1, open, close);
+  if (openIndex <= 0) {
+    return undefined;
+  }
+
+  const base = expr.slice(0, openIndex).trimEnd();
+  if (!isSelectorBaseCandidate(base)) {
+    return undefined;
+  }
+
+  const inside = expr.slice(openIndex + 1, -1);
+  const argumentsWithSpans = splitTopLevelWithSpans(inside, ",").map((span) => {
+    const leading = leadingWhitespaceLength(span.text);
+    const trailing = span.text.length - span.text.trimEnd().length;
+    return {
+      text: span.text.trim(),
+      start: openIndex + 1 + span.start + leading,
+      end: openIndex + 1 + span.end - trailing
+    };
+  }).filter((span) => span.text);
+
+  return {
+    kind,
+    base,
+    baseStart: 0,
+    selectorStart: openIndex,
+    arguments: argumentsWithSpans
+  };
+}
+
+function parseTrailingRecordSelector(expr) {
+  if (/^\d+\.\d+$/.test(expr)) {
+    return undefined;
+  }
+
+  const dotIndex = findTrailingRecordDot(expr);
+  if (dotIndex <= 0) {
+    return undefined;
+  }
+
+  const field = expr.slice(dotIndex + 1);
+  if (!/^(?:[A-Za-z_][A-Za-z0-9_]*|\d+)$/.test(field)) {
+    return undefined;
+  }
+
+  const base = expr.slice(0, dotIndex).trimEnd();
+  if (!isSelectorBaseCandidate(base)) {
+    return undefined;
+  }
+
+  return {
+    kind: "record",
+    base,
+    baseStart: 0,
+    selectorStart: dotIndex,
+    field,
+    fieldStart: dotIndex + 1
+  };
+}
+
+function findMatchingOpeningDelimiter(expr, closeIndex, open, close) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = closeIndex; index >= 0; index -= 1) {
+    const char = expr[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === close) {
+      depth += 1;
+      continue;
+    }
+    if (char === open) {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function findTrailingRecordDot(expr) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = expr.length - 1; index >= 0; index -= 1) {
+    const char = expr[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === ")" || char === "]" || char === "}") {
+      depth += 1;
+      continue;
+    }
+    if (char === "(" || char === "[" || char === "{") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth !== 0) {
+      continue;
+    }
+    if (char === "." && expr[index - 1] !== "." && expr[index + 1] !== ".") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function isSelectorBaseCandidate(base) {
+  if (!base) {
+    return false;
+  }
+  if (/[+\-*/^=<>]$/.test(base) || /\b(?:and|in|mod|not|or)$/.test(base)) {
+    return false;
+  }
+  return !parseBinaryExpression(base) && !parseUnaryNotExpression(base);
 }
 
 function inferBinaryExpression(binary, scope, data, expressionOffset) {
@@ -1363,6 +1676,46 @@ function isClearlyInvalidMembershipContainer(type) {
     return false;
   }
   if (hasAnyFilter({ filters: [...expandedFilters(type.filters || [])] }, ["IsListOrCollection", "IsCollection", "IsList", "IsDenseList", "IsString"])) {
+    return false;
+  }
+  return hasAnyConcreteFamily(new Set([...expandedFilters(type.filters || [])].map(filterFamily).filter(Boolean)));
+}
+
+function isClearlyInvalidListSelectorBase(type) {
+  if (!type || type.confidence === "unknown") {
+    return false;
+  }
+  if (hasAnyFilter(type, ["IsList", "IsDenseList", "IsString"])) {
+    return false;
+  }
+  return hasAnyConcreteFamily(new Set([...expandedFilters(type.filters || [])].map(filterFamily).filter(Boolean)));
+}
+
+function isClearlyInvalidListIndex(type) {
+  if (!type || type.confidence === "unknown") {
+    return false;
+  }
+  return !hasAnyFilter({ filters: [...expandedFilters(type.filters || [])] }, ["IsInt"]);
+}
+
+function isClearlyInvalidPositionList(type) {
+  if (!type || type.confidence === "unknown") {
+    return false;
+  }
+  if (!hasAnyFilter(type, ["IsList", "IsDenseList"])) {
+    return hasAnyConcreteFamily(new Set([...expandedFilters(type.filters || [])].map(filterFamily).filter(Boolean)));
+  }
+  if (type.element && isClearlyInvalidListIndex(type.element)) {
+    return true;
+  }
+  return false;
+}
+
+function isClearlyInvalidRecordSelectorBase(type) {
+  if (!type || type.confidence === "unknown") {
+    return false;
+  }
+  if (hasAnyFilter(type, ["IsRecord"])) {
     return false;
   }
   return hasAnyConcreteFamily(new Set([...expandedFilters(type.filters || [])].map(filterFamily).filter(Boolean)));
@@ -1994,6 +2347,7 @@ function typeInfo(label, filters = [], options = {}) {
     element: options.element,
     parameters: options.parameters || [],
     returnType: options.returnType,
+    fields: options.fields,
     signatures: options.signatures || [],
     documentation: options.documentation,
     parameterTypes: options.parameterTypes || [],
@@ -2012,6 +2366,7 @@ function cloneType(type) {
     ...type,
     filters: [...(type.filters || [])],
     parameters: [...(type.parameters || [])],
+    fields: type.fields ? { ...type.fields } : undefined,
     signatures: [...(type.signatures || [])]
   };
 }
@@ -2029,7 +2384,8 @@ function mergeTypeInfo(left, right) {
     [...(left.filters || []), ...(right.filters || [])],
     {
       confidence: left.confidence === right.confidence ? left.confidence : "merged",
-      element: left.element || right.element
+      element: left.element || right.element,
+      fields: left.fields || right.fields
     }
   );
 }

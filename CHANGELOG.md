@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.12
+
+- Added selector inference for list indexing, sublist selection, string indexing/slicing, and record fields.
+- Preserved collection element filters through `list[i]`, `list{positions}`, and selectors chained after function calls.
+- Added diagnostics for clear selector failures such as non-list bases, non-integer indices, non-list sublist positions, non-record field access, and unknown fields on record literals.
+
 ## 0.3.11
 
 - Added GAP-reader-aligned inference for unary `not`, `mod`, `^`, and membership `in` expressions.

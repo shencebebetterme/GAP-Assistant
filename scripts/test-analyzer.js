@@ -156,6 +156,55 @@ assert(operatorSemanticMessages.some((message) => message.includes("Operator mod
 assert(operatorSemanticMessages.some((message) => message.includes("Operator ^ may fail")), "power should reuse arithmetic diagnostics");
 assert(operatorSemanticMessages.some((message) => message.includes("Operator ^ is not associative")), "power should diagnose GAP's non-associative syntax");
 
+const selectorSample = [
+  "G := SymmetricGroup(4);",
+  "gens := GeneratorsOfGroup(G);",
+  "first := gens[1];",
+  "again := GeneratorsOfGroup(G)[1];",
+  "picked := gens{[1]};",
+  "str := \"abc\";",
+  "ch := str[2];",
+  "slice := str{[1, 3]};",
+  "r := rec(count := 3, name := \"gap\");",
+  "count := r.count;",
+  "name := r.name;",
+  "missing := r.missing;",
+  "badBase := 5[1];",
+  "badIndex := gens[\"x\"];",
+  "badSubPositions := gens{1};",
+  "badRecord := [1, 2].name;",
+  ""
+].join("\n");
+const selectorAnalysis = analyzer.analyze(selectorSample, "memory://selectors.g");
+const selectorScope = selectorAnalysis.scopes[0];
+const first = selectorScope.symbols.get("first");
+assert(first && first.type.filters.includes("IsMultiplicativeElementWithInverse"), "list selector should infer collection element filters");
+const again = selectorScope.symbols.get("again");
+assert(again && again.type.filters.includes("IsMultiplicativeElementWithInverse"), "selector inference should work after call expressions");
+const picked = selectorScope.symbols.get("picked");
+assert(picked && picked.type.filters.includes("IsList"), "sublist selector should infer a list result");
+assert(
+  picked.type.element && picked.type.element.filters.includes("IsMultiplicativeElementWithInverse"),
+  "sublist selector should preserve input element filters"
+);
+const ch = selectorScope.symbols.get("ch");
+assert(ch && ch.type.filters.includes("IsChar"), "string index selector should infer a character");
+const slice = selectorScope.symbols.get("slice");
+assert(slice && slice.type.filters.includes("IsString"), "string sublist selector should infer a string");
+const count = selectorScope.symbols.get("count");
+assert(count && count.type.filters.includes("IsInt"), "record selector should use record literal field types");
+const name = selectorScope.symbols.get("name");
+assert(name && name.type.filters.includes("IsString"), "record selector should preserve string field types");
+const selectorMessages = selectorAnalysis.diagnostics
+  .filter((diagnostic) => diagnostic.code === "selector-type")
+  .map((diagnostic) => diagnostic.message);
+assert.strictEqual(selectorMessages.length, 5, "selector checks should report the five clear failures");
+assert(selectorMessages.some((message) => message.includes("field missing")), "record selector should diagnose unknown literal fields");
+assert(selectorMessages.some((message) => message.includes("base is integer")), "list selector should diagnose non-list bases");
+assert(selectorMessages.some((message) => message.includes("index is string")), "list selector should diagnose non-integer indices");
+assert(selectorMessages.some((message) => message.includes("positions are integer")), "sublist selector should diagnose non-list positions");
+assert(selectorMessages.some((message) => message.includes("expected a record")), "record selector should diagnose non-record bases");
+
 const flowSample = [
   "flow := function(obj)",
   "    if IsString(obj) then",
