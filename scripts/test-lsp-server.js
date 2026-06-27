@@ -142,7 +142,8 @@ async function main() {
 
   const hover = await waitForResponse(2);
   assert(hover.result.contents.value.includes("GAP inference"), "hover should include static inference");
-  assert(hover.result.contents.value.includes("G := symmetric permutation group;"), "hover should include inferred GAP type");
+  assert(hover.result.contents.value.includes("<code>G</code>"), "hover should include inferred GAP symbol");
+  assert(hover.result.contents.value.includes("<strong>symmetric permutation group</strong>"), "hover should include styled inferred GAP type");
   assert(!hover.result.contents.value.includes("Source:"), "hover should not include internal source lines");
   assert(!hover.result.contents.value.includes("Confidence:"), "hover should not include confidence lines");
 
@@ -161,7 +162,8 @@ async function main() {
   });
 
   const stringHover = await waitForResponse(4);
-  assert(stringHover.result.contents.value.includes("str := string;"), "hover should infer string literal assignments");
+  assert(stringHover.result.contents.value.includes("<code>str</code>"), "hover should infer string literal assignments");
+  assert(stringHover.result.contents.value.includes("<strong>string</strong>"), "hover should style string literal types");
   assert(!stringHover.result.contents.value.includes("IsString"), "hover should not repeat string filters");
 
   send({
@@ -179,7 +181,8 @@ async function main() {
   });
 
   const sizeHover = await waitForResponse(6);
-  assert(sizeHover.result.contents.value.includes("Size(listorcoll: IsListOrCollection)"), "hover signature should include Size input filter");
+  assert(sizeHover.result.contents.value.includes("<code>Size</code>"), "hover signature should include Size");
+  assert(sizeHover.result.contents.value.includes("<strong>IsListOrCollection</strong>"), "hover signature should include styled Size input filter");
   assert(!sizeHover.result.contents.value.includes("Input filters"), "hover should not repeat declaration input filters");
 
   send({
@@ -197,7 +200,8 @@ async function main() {
   });
 
   const functionHover = await waitForResponse(5);
-  assert(functionHover.result.contents.value.includes("uses(obj: permutation group)"), "function hover should include inferred input type in the signature");
+  assert(functionHover.result.contents.value.includes("<code>uses</code>"), "function hover should include the function name");
+  assert(functionHover.result.contents.value.includes("<strong>permutation group</strong>"), "function hover should include styled inferred input type in the signature");
   assert(!functionHover.result.contents.value.includes("Source:"), "function hover should not include internal source lines");
 
   send({ id: 3, method: "shutdown", params: null });

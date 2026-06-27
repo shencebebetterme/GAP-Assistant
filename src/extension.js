@@ -121,6 +121,7 @@ class GapHoverProvider {
     const shownEntryGroups = entryGroups.slice(0, maxEntries);
 
     const markdown = new vscode.MarkdownString(undefined, true);
+    markdown.supportHtml = true;
     markdown.isTrusted = {
       enabledCommands: ["gapReference.openLocalManual"]
     };

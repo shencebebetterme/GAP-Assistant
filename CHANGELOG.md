@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.19
+
+- Styled inferred type tokens with a distinct colored, bold code treatment in inference hovers.
+- Enabled HTML rendering for extension hover markdown so the type styling appears in VS Code.
+
 ## 0.3.18
 
 - Rendered variable and function inference hovers with the same highlighted snippet style.

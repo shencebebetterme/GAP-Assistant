@@ -6,6 +6,10 @@ const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TERMINATING_CALLS = new Set(["ErrorNoReturn", "TryNextMethod"]);
 const HOVER_WRAP_COLUMN = 88;
 const MAX_HOVER_FIELDS = 8;
+const HOVER_SIGNATURE_STYLE = "font-family: var(--vscode-editor-font-family); line-height: 1.45;";
+const HOVER_META_STYLE = "color: var(--vscode-descriptionForeground);";
+const HOVER_OPERATOR_STYLE = "color: var(--vscode-symbolIcon-operatorForeground, var(--vscode-foreground));";
+const HOVER_TYPE_STYLE = "color: var(--vscode-symbolIcon-typeParameterForeground, var(--vscode-textLink-foreground)); font-weight: 600;";
 
 const HARD_CODED_CALLS = {
   AlternatingGroup: callType("alternating permutation group", ["IsObject", "IsCollection", "IsMagma", "IsGroup", "IsPermGroup", "IsFinite"], "constructor"),
@@ -2540,16 +2544,16 @@ function formatInferenceMarkdown(hover) {
   const type = symbol.type;
   const displayName = symbol.name || hover.word.text;
   const returnType = symbol.returnType || (type && type.returnType);
-  const lines = ["#### GAP inference", "", "```gap"];
+  const lines = ["#### GAP inference", "", `<div style="${HOVER_SIGNATURE_STYLE}">`];
   lines.push(...formatInferenceSignatureLines(symbol, type, displayName));
-  lines.push("```", "");
+  lines.push("</div>", "");
 
   if (!isFunctionType(type)) {
     appendStructureDetails(lines, type, "**Structure**");
   }
 
   if (returnType) {
-    lines.push(`**Returns** ${codeSpan(formatTypeExpression(returnType))}`, "");
+    lines.push(`**Returns** ${formatTypeHtml(returnType)}`, "");
     appendStructureDetails(lines, returnType, "**Return structure**");
   }
 
@@ -2573,38 +2577,41 @@ function formatInferenceSignatureLines(symbol, type, displayName) {
 function formatFunctionSignatureLines(scope, displayName, symbol, type) {
   const returnType = symbol.returnType || (type && type.returnType);
   const params = signatureParameterEntries(symbol, type);
-  const lines = [`# ${scope} function`];
-  const returnExpression = formatTypeExpression(returnType);
+  const lines = [metaLine(`# ${scope} function`)];
+  const returnExpression = formatTypeHtml(returnType);
+  const returnText = formatTypeExpression(returnType);
   const inlineParams = params.map(formatSignatureParameter).join(", ");
-  const inline = `${displayName}(${inlineParams}) -> ${returnExpression};`;
-  if (inline.length <= HOVER_WRAP_COLUMN && params.length <= 2) {
-    lines.push(inline);
+  const inlineText = `${displayName}(${params.map(formatSignatureParameterText).join(", ")}) -> ${returnText};`;
+  const inlineHtml = `${identifierToken(displayName)}(${inlineParams}) ${operatorToken("->")} ${returnExpression};`;
+  if (inlineText.length <= HOVER_WRAP_COLUMN && params.length <= 2) {
+    lines.push(htmlLine(inlineHtml));
     return lines;
   }
 
-  lines.push(`${displayName}(`);
+  lines.push(htmlLine(`${identifierToken(displayName)}(`));
   params.forEach((parameter, index) => {
     const suffix = index === params.length - 1 ? "" : ",";
-    lines.push(`    ${formatSignatureParameter(parameter)}${suffix}`);
+    lines.push(htmlLine(`${htmlIndent(4)}${formatSignatureParameter(parameter)}${suffix}`));
   });
-  lines.push(`) -> ${returnExpression};`);
+  lines.push(htmlLine(`) ${operatorToken("->")} ${returnExpression};`));
   return lines;
 }
 
 function formatValueSignatureLines(scope, displayName, type) {
-  const lines = [`# ${scope} variable`];
-  const expression = formatTypeExpression(type);
-  const inline = `${displayName} := ${expression};`;
-  if (inline.length <= HOVER_WRAP_COLUMN) {
-    lines.push(inline);
+  const lines = [metaLine(`# ${scope} variable`)];
+  const expressionText = formatTypeExpression(type);
+  const expressionHtml = formatTypeHtml(type);
+  const inlineText = `${displayName} := ${expressionText};`;
+  if (inlineText.length <= HOVER_WRAP_COLUMN) {
+    lines.push(htmlLine(`${identifierToken(displayName)} ${operatorToken(":=")} ${expressionHtml};`));
     return lines;
   }
 
-  lines.push(`${displayName} := ${formatBaseTypeLabel(type)}`);
+  lines.push(htmlLine(`${identifierToken(displayName)} ${operatorToken(":=")} ${typeToken(formatBaseTypeLabel(type))}`));
   if (type && type.element) {
-    lines.push(`    [${formatTypeExpression(type.element)}]`);
+    lines.push(htmlLine(`${htmlIndent(4)}[${formatTypeHtml(type.element)}]`));
   }
-  lines[lines.length - 1] = `${lines[lines.length - 1]};`;
+  lines[lines.length - 1] = lines[lines.length - 1].replace(/<\/div>$/, ";</div>");
   return lines;
 }
 
@@ -2630,10 +2637,24 @@ function signatureParameterEntries(symbol, type) {
 }
 
 function formatSignatureParameter(parameter) {
-  return `${parameter.name}: ${formatSignatureType(parameter.type)}`;
+  return `${identifierToken(parameter.name)}: ${formatSignatureType(parameter.type)}`;
 }
 
 function formatSignatureType(type) {
+  if (!type) {
+    return typeToken("GAP object");
+  }
+  if (isGenericTypeLabel(type.label)) {
+    return typeToken(labelFromFilters(type.filters || [], meaningfulFilterLabel(type.filters || []) || "GAP object"));
+  }
+  return formatTypeHtml(type);
+}
+
+function formatSignatureParameterText(parameter) {
+  return `${parameter.name}: ${formatSignatureTypeText(parameter.type)}`;
+}
+
+function formatSignatureTypeText(type) {
   if (!type) {
     return "GAP object";
   }
@@ -2656,12 +2677,12 @@ function appendStructureDetails(lines, type, label) {
 function formatStructureLines(type) {
   const lines = [];
   if (type.element) {
-    lines.push(`- element: ${codeSpan(formatTypeExpression(type.element))}`);
+    lines.push(`- element: ${formatTypeHtml(type.element)}`);
   }
   if (type.fields) {
     const fieldEntries = Object.entries(type.fields).slice(0, MAX_HOVER_FIELDS);
     for (const [name, fieldType] of fieldEntries) {
-      lines.push(`- ${codeSpan(name)}: ${codeSpan(formatTypeExpression(fieldType))}`);
+      lines.push(`- ${identifierToken(name)}: ${formatTypeHtml(fieldType)}`);
     }
     const remaining = Object.keys(type.fields).length - fieldEntries.length;
     if (remaining > 0) {
@@ -2683,6 +2704,39 @@ function scopeLabel(scope) {
 
 function codeSpan(value) {
   return `\`${String(value).replace(/`/g, "\\`")}\``;
+}
+
+function metaLine(value) {
+  return htmlLine(`<span style="${HOVER_META_STYLE}">${htmlEscape(value)}</span>`);
+}
+
+function htmlLine(value) {
+  return `<div>${value}</div>`;
+}
+
+function htmlIndent(count) {
+  return "&nbsp;".repeat(count);
+}
+
+function identifierToken(value) {
+  return `<code>${htmlEscape(value)}</code>`;
+}
+
+function operatorToken(value) {
+  return `<span style="${HOVER_OPERATOR_STYLE}">${htmlEscape(value)}</span>`;
+}
+
+function typeToken(value) {
+  return `<code style="${HOVER_TYPE_STYLE}"><strong>${htmlEscape(value)}</strong></code>`;
+}
+
+function htmlEscape(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function formatTypeLabel(type) {
@@ -2708,6 +2762,22 @@ function formatTypeExpression(type) {
   const base = formatBaseTypeLabel(type);
   if (type.element) {
     return `${base}[${formatTypeExpression(type.element)}]`;
+  }
+  return base;
+}
+
+function formatTypeHtml(type) {
+  if (!type) {
+    return typeToken("unknown");
+  }
+  if (isFunctionType(type)) {
+    const params = Array.isArray(type.parameters) ? type.parameters.map(htmlEscape).join(", ") : "";
+    return `${typeToken("function")}(${params}) ${operatorToken("->")} ${formatTypeHtml(type.returnType)}`;
+  }
+
+  const base = typeToken(formatBaseTypeLabel(type));
+  if (type.element) {
+    return `${base}[${formatTypeHtml(type.element)}]`;
   }
   return base;
 }
