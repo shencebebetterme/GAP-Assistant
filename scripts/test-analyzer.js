@@ -225,15 +225,49 @@ const unassignedLocalSample = [
   "    assigned := 1;",
   "    return assigned;",
   "end;",
+  "",
+  "branchAssigned := function(flag)",
+  "    local value;",
+  "    if flag then",
+  "        value := 1;",
+  "    else",
+  "        value := 2;",
+  "    fi;",
+  "    return value;",
+  "end;",
+  "",
+  "branchPartial := function(flag)",
+  "    local partial;",
+  "    if flag then",
+  "        partial := 1;",
+  "    fi;",
+  "    return partial;",
+  "end;",
+  "",
+  "branchWithTermination := function(flag)",
+  "    local eventual;",
+  "    if flag then",
+  "        return fail;",
+  "    else",
+  "        eventual := 4;",
+  "    fi;",
+  "    return eventual;",
+  "end;",
   ""
 ].join("\n");
 const unassignedLocalAnalysis = analyzer.analyze(unassignedLocalSample, "memory://unassigned-local.g");
 const unassignedLocalDiagnostics = unassignedLocalAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "unassigned-local");
-assert.strictEqual(unassignedLocalDiagnostics.length, 2, "reads of declared locals before assignment should be diagnosed");
+assert.strictEqual(unassignedLocalDiagnostics.length, 3, "reads of declared locals before assignment should be diagnosed");
 assert(unassignedLocalDiagnostics[0].message.includes("value"), "assignment expression diagnostic should identify the unassigned local");
 assert.strictEqual(unassignedLocalDiagnostics[0].range.start.line, 3, "assignment expression diagnostic should point at the unassigned read");
 assert(unassignedLocalDiagnostics[1].message.includes("missing"), "return diagnostic should identify the unassigned local");
 assert.strictEqual(unassignedLocalDiagnostics[1].range.start.line, 11, "return diagnostic should point at the unassigned read");
+assert(unassignedLocalDiagnostics[2].message.includes("partial"), "partial branch diagnostic should identify the unassigned local");
+assert.strictEqual(unassignedLocalDiagnostics[2].range.start.line, 35, "partial branch diagnostic should point after the conditional");
+const branchAssigned = unassignedLocalAnalysis.scopes[0].symbols.get("branchAssigned");
+assert(branchAssigned && branchAssigned.returnType.filters.includes("IsInt"), "locals assigned on every if branch should be assigned after the conditional");
+const branchWithTermination = unassignedLocalAnalysis.scopes[0].symbols.get("branchWithTermination");
+assert(branchWithTermination && branchWithTermination.returnType.filters.includes("IsInt"), "terminating branches should not block definite assignment on reaching paths");
 
 const flowSample = [
   "flow := function(obj)",

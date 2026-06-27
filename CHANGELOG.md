@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.15
+
+- Propagated definite local assignment through exhaustive `if`/`elif`/`else` branches.
+- Treated terminating branches as non-reaching paths when deciding whether a local is assigned after a conditional.
+
 ## 0.3.14
 
 - Tracked assignment state for declared local variables.

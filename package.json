@@ -2,7 +2,7 @@
   "name": "gap-reference-assistant",
   "displayName": "GAP Reference Assistant",
   "description": "Syntax highlighting, documented symbol highlighting, and hover reference text for GAP.",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "publisher": "local-gap",
   "license": "GPL-2.0-or-later",
   "repository": {

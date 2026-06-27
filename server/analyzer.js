@@ -266,6 +266,76 @@ function analyzeIfStatementNode(statement, parentScope, data, functions, text, m
     applyRefinementsToScope(fallthroughRefinements, scope, statement.elseBody[0].start);
     analyzeStatements(statement.elseBody, scope, data, functions, text, masked, lineStarts, scopes);
   }
+
+  applyDefiniteBranchAssignments(statement, parentScope);
+}
+
+function applyDefiniteBranchAssignments(statement, parentScope) {
+  const assigned = definiteBranchAssignments(statement, parentScope);
+  for (const [name, type] of assigned) {
+    const symbol = lookupSymbol(parentScope, name);
+    if (!symbol || symbol.scope !== "local") {
+      continue;
+    }
+    symbol.assigned = true;
+    if (type) {
+      symbol.type = type;
+    }
+  }
+}
+
+function definiteBranchAssignments(statement, parentScope) {
+  const alternatives = (statement.branches || []).map((branch) => ({
+    statements: branch.body || [],
+    scope: branch.scope
+  }));
+
+  if (statement.elseBody && statement.elseBody.length > 0) {
+    alternatives.push({
+      statements: statement.elseBody,
+      scope: statement.elseScope
+    });
+  } else {
+    alternatives.push({
+      statements: [],
+      scope: undefined
+    });
+  }
+
+  const reachableAssignments = alternatives
+    .filter((alternative) => !statementsTerminate(alternative.statements))
+    .map((alternative) => assignedLocalSymbolsInScope(alternative.scope, parentScope));
+
+  if (reachableAssignments.length === 0) {
+    return new Map();
+  }
+
+  const commonNames = [...reachableAssignments[0].keys()].filter((name) =>
+    reachableAssignments.every((assignments) => assignments.has(name))
+  );
+  const result = new Map();
+  for (const name of commonNames) {
+    const mergedType = reachableAssignments
+      .map((assignments) => assignments.get(name).type)
+      .reduce(mergeTypeInfo);
+    result.set(name, mergedType);
+  }
+  return result;
+}
+
+function assignedLocalSymbolsInScope(scope, parentScope) {
+  const result = new Map();
+  if (!scope) {
+    return result;
+  }
+
+  for (const [name, symbol] of scope.symbols) {
+    const parentSymbol = lookupSymbol(parentScope, name);
+    if (parentSymbol && parentSymbol.scope === "local" && symbol.assigned === true) {
+      result.set(name, symbol);
+    }
+  }
+  return result;
 }
 
 function guardFallthroughScope(statement, parentScope, data, lineStarts, scopes) {
