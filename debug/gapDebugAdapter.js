@@ -139,8 +139,11 @@ class GapDebugAdapter {
         return;
 
       case "next":
+        this.resume(request, "next");
+        return;
+
       case "stepIn":
-        this.resume(request, "step");
+        this.resume(request, "stepIn");
         return;
 
       case "stepOut":
@@ -305,7 +308,7 @@ class GapDebugAdapter {
     const breakpoints = this.breakpointsByPath.get(normalizePath(probe.sourcePath)) || new Map();
     const breakpoint = breakpoints.get(probe.line);
     const firstStop = this.launchArgs && this.launchArgs.stopOnEntry && !this.currentProbe;
-    const shouldStep = this.stepMode === "step" || this.stepMode === "stepOut";
+    const shouldStep = this.shouldStopForStep(probe);
     const shouldStop = Boolean(firstStop || shouldStep || breakpoint || this.pauseRequested);
 
     this.currentProbe = { ...probe, ...hit };
@@ -326,6 +329,22 @@ class GapDebugAdapter {
       allThreadsStopped: true,
       hitBreakpointIds: breakpoint ? [breakpoint.id] : undefined
     });
+  }
+
+  shouldStopForStep(probe) {
+    if (!this.stepMode) {
+      return false;
+    }
+    if (this.stepMode.kind === "stepIn") {
+      return true;
+    }
+    if (this.stepMode.kind === "next") {
+      return probe.depth <= this.stepMode.depth;
+    }
+    if (this.stepMode.kind === "stepOut") {
+      return probe.depth < this.stepMode.depth;
+    }
+    return false;
   }
 
   stackTrace(request) {
@@ -391,10 +410,15 @@ class GapDebugAdapter {
     });
   }
 
-  resume(request, stepMode) {
+  resume(request, stepKind) {
     this.sendResponse(request, {
       allThreadsContinued: true
     });
+
+    const stepMode = stepKind ? {
+      kind: stepKind,
+      depth: this.currentProbe ? this.currentProbe.depth : 0
+    } : undefined;
 
     if (!this.paused) {
       this.stepMode = stepMode;

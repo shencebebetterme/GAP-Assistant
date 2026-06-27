@@ -35,14 +35,18 @@ function collectProbeMetadata(text, sourcePath, ast = parseGapSource(text), line
 
 function walkStatements(statements, scope, probes, sourcePath, lineStarts) {
   for (const statement of statements || []) {
-    addProbe(statement, scope, probes, sourcePath, lineStarts);
-
     if (statement.type === "localDeclaration") {
       for (const name of statement.names || []) {
         addVisibleName(scope, name.name);
       }
+      addProbe(statement, scope, probes, sourcePath, lineStarts, {
+        offset: statement.end,
+        lineOffset: statement.start
+      });
       continue;
     }
+
+    addProbe(statement, scope, probes, sourcePath, lineStarts);
 
     if (statement.type === "assignment") {
       addVisibleName(scope, statement.name);
@@ -92,14 +96,14 @@ function walkStatements(statements, scope, probes, sourcePath, lineStarts) {
   }
 }
 
-function addProbe(statement, scope, probes, sourcePath, lineStarts) {
+function addProbe(statement, scope, probes, sourcePath, lineStarts, options = {}) {
   if (!statement || typeof statement.start !== "number") {
     return;
   }
 
-  const position = positionFromOffset(lineStarts, statement.start);
+  const position = positionFromOffset(lineStarts, options.lineOffset ?? statement.start);
   probes.push({
-    offset: statement.start,
+    offset: options.offset ?? statement.start,
     sourcePath,
     line: position.line + 1,
     column: position.character + 1,

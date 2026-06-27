@@ -29,7 +29,7 @@ assert.deepStrictEqual(functionAssignment.variables, ["x"], "function assignment
 
 const localDeclaration = probes.find((probe) => probe.line === 3);
 assert(localDeclaration, "local declaration should get a probe");
-assert.deepStrictEqual(localDeclaration.variables, ["n", "x"], "function body should capture parameters and parent variables");
+assert.deepStrictEqual(localDeclaration.variables, ["n", "x", "y"], "local declaration probes should capture the newly declared local");
 
 const functionAssignmentInside = probes.find((probe) => probe.line === 4);
 assert(functionAssignmentInside, "function body assignment should get a probe");

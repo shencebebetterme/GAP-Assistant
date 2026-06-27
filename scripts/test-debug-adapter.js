@@ -18,7 +18,13 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gap-debug-adapter-test-")
 const program = path.join(tempDir, "sample.g");
 fs.writeFileSync(program, [
   "x := 1;",
-  "y := x + 2;",
+  "f := function(n)",
+  "  local y;",
+  "  y := n + x;",
+  "  return y;",
+  "end;",
+  "z := f(2);",
+  "w := f(3);",
   "Print(\"DONE\\n\");",
   ""
 ].join("\n"), "utf8");
@@ -121,14 +127,14 @@ async function main() {
     },
     breakpoints: [
       {
-        line: 2
+        line: 7
       }
     ]
   });
   const breakpointsResponse = await waitForResponse("setBreakpoints", breakpointsSeq);
   assert.strictEqual(breakpointsResponse.body.breakpoints.length, 1, "one breakpoint should be returned");
   assert.strictEqual(breakpointsResponse.body.breakpoints[0].verified, true, "line breakpoint should be verified");
-  assert.strictEqual(breakpointsResponse.body.breakpoints[0].line, 2, "breakpoint should stay on executable line 2");
+  assert.strictEqual(breakpointsResponse.body.breakpoints[0].line, 7, "breakpoint should stay on executable line 7");
 
   const launchSeq = send("launch", {
     program,
@@ -149,7 +155,7 @@ async function main() {
   });
   const stack = await waitForResponse("stackTrace", stackSeq);
   assert.strictEqual(stack.body.stackFrames.length, 1, "adapter should report the current GAP frame");
-  assert.strictEqual(stack.body.stackFrames[0].line, 2, "stack frame should point at the breakpoint line");
+  assert.strictEqual(stack.body.stackFrames[0].line, 7, "stack frame should point at the breakpoint line");
   assert.strictEqual(path.normalize(stack.body.stackFrames[0].source.path), path.normalize(program), "stack frame should use the original source path");
 
   const scopesSeq = send("scopes", {
@@ -164,7 +170,7 @@ async function main() {
   const variables = await waitForResponse("variables", variablesSeq);
   const x = variables.body.variables.find((variable) => variable.name === "x");
   assert(x, "captured variables should include x");
-  assert.strictEqual(x.value, "1", "x should have its runtime value before line 2 executes");
+  assert.strictEqual(x.value, "1", "x should have its runtime value before the function call executes");
 
   const evaluateSeq = send("evaluate", {
     expression: "x",
@@ -186,15 +192,38 @@ async function main() {
     threadId: 1
   });
   const steppedStack = await waitForResponse("stackTrace", steppedStackSeq);
-  assert.strictEqual(steppedStack.body.stackFrames[0].line, 3, "step should advance to the next executable statement");
+  assert.strictEqual(steppedStack.body.stackFrames[0].line, 8, "next should step over the function call");
 
   const steppedVariablesSeq = send("variables", {
     variablesReference: scopes.body.scopes[0].variablesReference
   });
   const steppedVariables = await waitForResponse("variables", steppedVariablesSeq);
-  const y = steppedVariables.body.variables.find((variable) => variable.name === "y");
-  assert(y, "captured variables after stepping should include y");
-  assert.strictEqual(y.value, "3", "y should have its runtime value after line 2 executes");
+  const z = steppedVariables.body.variables.find((variable) => variable.name === "z");
+  assert(z, "captured variables after stepping over should include z");
+  assert.strictEqual(z.value, "3", "z should have its runtime value after stepping over f(2)");
+
+  const stepInEventStart = messages.length;
+  const stepInSeq = send("stepIn", {
+    threadId: 1
+  });
+  await waitForResponse("stepIn", stepInSeq);
+  const steppedIn = await waitForEvent("stopped", stepInEventStart);
+  assert.strictEqual(steppedIn.body.reason, "step", "adapter should stop after a stepIn request");
+
+  const stepInStackSeq = send("stackTrace", {
+    threadId: 1
+  });
+  const stepInStack = await waitForResponse("stackTrace", stepInStackSeq);
+  assert.strictEqual(stepInStack.body.stackFrames[0].line, 3, "stepIn should enter the called function body");
+  assert.strictEqual(stepInStack.body.stackFrames[0].name, "f", "stepIn frame should use the GAP function name");
+
+  const stepInVariablesSeq = send("variables", {
+    variablesReference: scopes.body.scopes[0].variablesReference
+  });
+  const stepInVariables = await waitForResponse("variables", stepInVariablesSeq);
+  const n = stepInVariables.body.variables.find((variable) => variable.name === "n");
+  assert(n, "captured variables after stepIn should include the function parameter");
+  assert.strictEqual(n.value, "3", "stepIn should capture the runtime function argument");
 
   const continueSeq = send("continue", {
     threadId: 1
@@ -209,7 +238,7 @@ async function main() {
   assert(output.includes("DONE"), "debuggee stdout should be forwarded");
 
   adapter.kill();
-  fs.rmSync(tempDir, { recursive: true, force: true });
+  safeRemoveTempDir();
   console.log("Debug adapter smoke test passed.");
 }
 
@@ -223,7 +252,21 @@ function hasWslGap() {
 
 main().catch((error) => {
   adapter.kill();
-  fs.rmSync(tempDir, { recursive: true, force: true });
+  safeRemoveTempDir();
   console.error(error);
   process.exit(1);
 });
+
+function safeRemoveTempDir() {
+  try {
+    fs.rmSync(tempDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100
+    });
+  } catch (_) {
+    // WSL can briefly hold the temp script path after GAP exits; the OS temp
+    // cleaner can collect it if removal is still denied after retries.
+  }
+}
