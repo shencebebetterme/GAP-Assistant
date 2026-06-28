@@ -226,7 +226,9 @@ function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, 
     statement.bodyStart
   );
   const returnType = inferReturnTypeFromStatements(statement.body || [], scope, data);
+  const documentation = functionDocumentationFromComments(text, statement.start, lineStarts);
   const fnType = functionType(paramSymbols.map((parameter) => parameter.name), returnType, {
+    documentation,
     parameterTypes: paramSymbols.map((parameter) => parameter.type)
   });
 
@@ -236,6 +238,7 @@ function analyzeFunctionAssignmentNode(statement, parentScope, data, functions, 
     range: rangeFromOffset(lineStarts, statement.nameStart),
     type: fnType,
     source: "function definition",
+    documentation,
     parameters: paramSymbols,
     returnType,
     assigned: true
@@ -923,6 +926,71 @@ function parseFunctionAssignments(text, masked, lineStarts, globalScope, data) {
   return functions;
 }
 
+function functionDocumentationFromComments(text, statementStart, lineStarts) {
+  const position = rangeFromOffset(lineStarts, statementStart);
+  const lines = [];
+
+  for (let line = position.line - 1; line >= 0; line -= 1) {
+    const textLine = lineTextAt(text, lineStarts, line);
+    if (!textLine.trim()) {
+      break;
+    }
+
+    const match = /^\s*##\s?(.*)$/.exec(textLine) || /^\s*#!\s?(.*)$/.exec(textLine);
+    if (!match) {
+      break;
+    }
+
+    lines.unshift(match[1].trimEnd());
+  }
+
+  return parseFunctionDocumentation(lines);
+}
+
+function parseFunctionDocumentation(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return undefined;
+  }
+
+  const summary = [];
+  const params = [];
+  const returns = [];
+  for (const line of lines) {
+    const paramMatch = /^@param\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::|-)?\s*(.*)$/.exec(line.trim());
+    if (paramMatch) {
+      params.push({
+        name: paramMatch[1],
+        text: paramMatch[2].trim()
+      });
+      continue;
+    }
+
+    const returnMatch = /^@returns?\s*(?::|-)?\s*(.*)$/.exec(line.trim());
+    if (returnMatch) {
+      returns.push(returnMatch[1].trim());
+      continue;
+    }
+
+    summary.push(line.trim());
+  }
+
+  if (summary.length === 0 && params.length === 0 && returns.length === 0) {
+    return undefined;
+  }
+
+  return {
+    summary,
+    params,
+    returns
+  };
+}
+
+function lineTextAt(text, lineStarts, line) {
+  const start = lineStarts[line];
+  const end = line + 1 < lineStarts.length ? lineStarts[line + 1] : text.length;
+  return text.slice(start, end).replace(/\r?\n$/, "");
+}
+
 function parseAssignments(text, masked, scope, data, excludedRanges = [], baseOffset = 0) {
   const regex = /\b([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([^;]+);/g;
   let match;
@@ -1016,6 +1084,7 @@ function refineFunctionParametersFromCallSites(text, masked, functions, globalSc
     });
 
     fn.symbol.type = functionType(fn.parameters.map((parameter) => parameter.name), fn.returnType, {
+      documentation: fn.symbol.documentation,
       parameterTypes: fn.parameters.map((parameter) => parameter.type)
     });
   }
@@ -3258,11 +3327,16 @@ function formatInferenceMarkdown(hover) {
   const type = symbol.type;
   const displayName = symbol.name || hover.word.text;
   const returnType = symbol.returnType || (type && type.returnType);
-  const lines = ["#### GAP inference", "", `<div style="${HOVER_SIGNATURE_STYLE}">`];
-  lines.push(...formatInferenceSignatureLines(symbol, type, displayName));
-  lines.push("</div>", "");
+  const lines = ["#### GAP inference", ""];
 
-  if (!isFunctionType(type)) {
+  if (isFunctionType(type)) {
+    lines.push(...formatFunctionSignatureLines(scopeLabel(symbol.scope || "symbol"), displayName, symbol, type));
+    appendFunctionDocumentation(lines, symbol.documentation || (type && type.documentation));
+    appendParameterDetails(lines, signatureParameterEntries(symbol, type));
+  } else {
+    lines.push(`<div style="${HOVER_SIGNATURE_STYLE}">`);
+    lines.push(...formatValueSignatureLines(scopeLabel(symbol.scope || "symbol"), displayName, type));
+    lines.push("</div>", "");
     appendStructureDetails(lines, type, "**Structure**");
   }
 
@@ -3291,24 +3365,64 @@ function formatInferenceSignatureLines(symbol, type, displayName) {
 function formatFunctionSignatureLines(scope, displayName, symbol, type) {
   const returnType = symbol.returnType || (type && type.returnType);
   const params = signatureParameterEntries(symbol, type);
-  const lines = [metaLine(`# ${scope} function`)];
-  const returnExpression = formatTypeHtml(returnType);
   const returnText = formatTypeExpression(returnType);
-  const inlineParams = params.map(formatSignatureParameter).join(", ");
   const inlineText = `${displayName}(${params.map(formatSignatureParameterText).join(", ")}) -> ${returnText};`;
-  const inlineHtml = `${identifierToken(displayName)}(${inlineParams}) ${operatorToken("->")} ${returnExpression};`;
+  const lines = ["```gap", `# ${scope} function`];
   if (inlineText.length <= HOVER_WRAP_COLUMN && params.length <= 2) {
-    lines.push(htmlLine(inlineHtml));
+    lines.push(`${displayName} := function(${params.map(formatSignatureParameterText).join(", ")}) -> ${returnText};`);
+    lines.push("```", "");
     return lines;
   }
 
-  lines.push(htmlLine(`${identifierToken(displayName)}(`));
+  lines.push(`${displayName} := function(`);
   params.forEach((parameter, index) => {
     const suffix = index === params.length - 1 ? "" : ",";
-    lines.push(htmlLine(`${htmlIndent(4)}${formatSignatureParameter(parameter)}${suffix}`));
+    lines.push(`    ${formatSignatureParameterText(parameter)}${suffix}`);
   });
-  lines.push(htmlLine(`) ${operatorToken("->")} ${returnExpression};`));
+  lines.push(`) -> ${returnText};`);
+  lines.push("```", "");
   return lines;
+}
+
+function appendFunctionDocumentation(lines, documentation) {
+  if (!documentation) {
+    return;
+  }
+
+  if (Array.isArray(documentation.summary) && documentation.summary.some(Boolean)) {
+    lines.push("**Documentation**", "");
+    lines.push(...documentation.summary.filter(Boolean));
+    lines.push("");
+  }
+
+  if (Array.isArray(documentation.params) && documentation.params.length > 0) {
+    lines.push("**Documented parameters**");
+    for (const parameter of documentation.params) {
+      lines.push(`- ${identifierToken(parameter.name)}: ${parameter.text || ""}`.trimEnd());
+    }
+    lines.push("");
+  }
+
+  if (Array.isArray(documentation.returns) && documentation.returns.length > 0) {
+    lines.push("**Documented returns**");
+    for (const item of documentation.returns) {
+      lines.push(`- ${item}`);
+    }
+    lines.push("");
+  }
+}
+
+function appendParameterDetails(lines, params) {
+  const entries = (params || []).filter((parameter) => parameter && parameter.name && parameter.type);
+  if (entries.length === 0) {
+    return;
+  }
+
+  lines.push("**Parameters**");
+  for (const parameter of entries) {
+    lines.push(`- ${identifierToken(parameter.name)}: ${formatSignatureType(parameter.type)}`);
+  }
+  lines.push("");
 }
 
 function formatValueSignatureLines(scope, displayName, type) {

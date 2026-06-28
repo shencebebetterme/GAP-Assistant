@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.37
+
+- Added `##`/`#!` doc-comment hovers for user-defined GAP functions, including `@param` and `@returns` sections.
+- Rendered GAP function hover signatures as syntax-highlighted `gap` code blocks with styled parameter and return details.
+
 ## 0.3.36
 
 - Added a red whole-line editor highlight for GAP runtime errors.

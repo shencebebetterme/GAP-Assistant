@@ -69,7 +69,7 @@ async function main() {
     assert(localHover.contents.value.includes("<strong>positive integer</strong>"), "client hover should style local container element type");
 
     const functionHover = await client.hover(document, { line: 10, character: 1 });
-    assert(functionHover.contents.value.includes("<code>uses</code>"), "client hover should return inferred function input type in the signature");
+    assert(functionHover.contents.value.includes("uses := function"), "client hover should return a highlighted function signature");
     assert(functionHover.contents.value.includes("<strong>list or collection</strong>"), "client hover should style body-derived function input requirement");
     assert(!functionHover.contents.value.includes("<strong>permutation group</strong>"), "client hover should not narrow requirements to one call-site type");
     assert(!functionHover.contents.value.includes("Input filters"), "client hover should not repeat function input filters");

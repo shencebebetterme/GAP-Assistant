@@ -181,7 +181,7 @@ async function main() {
   });
 
   const sizeHover = await waitForResponse(6);
-  assert(sizeHover.result.contents.value.includes("<code>Size</code>"), "hover signature should include Size");
+  assert(sizeHover.result.contents.value.includes("Size := function"), "hover signature should include Size");
   assert(sizeHover.result.contents.value.includes("<strong>list or collection</strong>"), "hover signature should include styled Size input type");
   assert(!sizeHover.result.contents.value.includes("Input filters"), "hover should not repeat declaration input filters");
 
@@ -200,7 +200,7 @@ async function main() {
   });
 
   const functionHover = await waitForResponse(5);
-  assert(functionHover.result.contents.value.includes("<code>uses</code>"), "function hover should include the function name");
+  assert(functionHover.result.contents.value.includes("uses := function"), "function hover should include the function name");
   assert(functionHover.result.contents.value.includes("<strong>list or collection</strong>"), "function hover should include body-derived input requirement in the signature");
   assert(!functionHover.result.contents.value.includes("<strong>permutation group</strong>"), "function hover should not narrow requirements to one call-site type");
   assert(!functionHover.result.contents.value.includes("Source:"), "function hover should not include internal source lines");

@@ -96,9 +96,9 @@ assert(
 );
 const builtinMarkdown = formatInferenceMarkdown(hoverBuiltin);
 assert(builtinMarkdown.includes("#### GAP inference"), "static hover should use the inference title");
-assert(builtinMarkdown.includes("<div style="), "static hover should include a compact styled signature block");
+assert(builtinMarkdown.includes("```gap"), "function hover should include a syntax-highlightable GAP signature block");
 assert(builtinMarkdown.includes("# system function"), "documented hover should show the callable scope");
-assert(builtinMarkdown.includes("<code>GeneratorsOfGroup</code>"), "documented hover should show the callable name");
+assert(builtinMarkdown.includes("GeneratorsOfGroup := function"), "documented hover should show the callable name in the signature");
 assert(builtinMarkdown.includes("<strong>group</strong>"), "documented hover should style group-like input types");
 assert(builtinMarkdown.includes("<strong>list of group generators</strong>"), "documented hover should style precise return types");
 assert(builtinMarkdown.includes("<strong>group element</strong>"), "documented hover should show precise return element types");
@@ -126,6 +126,24 @@ assert(digraphMarkdown.includes("<code>filt</code>"), "package signatures should
 assert(digraphMarkdown.includes("<code>obj</code>"), "package signatures should keep required parameters separate after optional groups");
 assert(digraphMarkdown.includes("<code>source</code>"), "package signatures should split optional trailing parameters");
 assert(digraphMarkdown.includes("<code>range</code>"), "package signatures should split optional trailing parameter groups");
+
+const documentedFunctionSample = [
+  "## Compute the size of a group-like object.",
+  "## @param obj group-like object to inspect",
+  "## @returns integer size",
+  "uses := function(obj)",
+  "    return Size(obj);",
+  "end;",
+  "answer := uses(SymmetricGroup(4));",
+  ""
+].join("\n");
+const documentedCallHover = analyzer.hoverAt(documentedFunctionSample, 6, 11);
+const documentedCallMarkdown = formatInferenceMarkdown(documentedCallHover);
+assert(documentedCallMarkdown.includes("uses := function"), "user function call hover should show the function signature");
+assert(documentedCallMarkdown.includes("Compute the size of a group-like object."), "user function call hover should include attached doc comments");
+assert(documentedCallMarkdown.includes("**Documented parameters**"), "user function doc comments should render parameter documentation");
+assert(documentedCallMarkdown.includes("<code>obj</code>: group-like object to inspect"), "user function doc comments should render styled parameter names");
+assert(documentedCallMarkdown.includes("integer size"), "user function doc comments should render return documentation");
 
 const gcdCallSample = [
   "d := Gcd([10, 15]);",
