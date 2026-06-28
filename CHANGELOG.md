@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Added the GAP Assistant extension icon for Marketplace and VS Code extension views.
+
 ## 0.4.0
 
 - Renamed the extension to GAP Assistant for Marketplace publication.
