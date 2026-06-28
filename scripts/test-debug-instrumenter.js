@@ -56,6 +56,17 @@ assert.strictEqual(
   "instrumented line map should map generated source lines back to original GAP lines"
 );
 
+const withRuntimePrelude = instrumentGapSource("z := x + 1;\n", sourcePath, {
+  runtimePrelude: "x := 41;"
+});
+assert(withRuntimePrelude.instrumented.includes("x := 41;\n"), "runtime preludes should execute before the debugged source");
+const generatedPreludeCallLine = withRuntimePrelude.instrumented.split(/\n/).findIndex((line) => line.includes("z := x + 1;")) + 1;
+assert.strictEqual(
+  withRuntimePrelude.lineMap[generatedPreludeCallLine].line,
+  1,
+  "runtime preludes should not shift original source line mapping"
+);
+
 console.log("Debug instrumenter tests passed.");
 
 function variableNames(probe) {

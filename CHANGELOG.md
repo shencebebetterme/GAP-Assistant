@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.5
+
+- Removed the notebook cell-title debug action to avoid interfering with Jupyter cell execution controls.
+- Used previous GAP code cells as context for notebook-cell hover analysis and debug runs.
+
 ## 0.4.4
 
 - Added **GAP: Debug Current Notebook Cell** for GAP code cells in notebooks, using the existing GAP debugger with notebook-cell source mapping.

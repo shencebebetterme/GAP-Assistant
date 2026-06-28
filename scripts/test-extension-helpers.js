@@ -3,6 +3,7 @@
 const assert = require("assert");
 const Module = require("module");
 
+const visibleNotebookEditors = [];
 const originalLoad = Module._load;
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === "vscode") {
@@ -93,7 +94,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
         }),
         activeTextEditor: undefined,
         activeNotebookEditor: undefined,
-        visibleNotebookEditors: [],
+        visibleNotebookEditors,
         visibleTextEditors: [],
         onDidChangeVisibleTextEditors: () => ({ dispose() {} }),
         showErrorMessage: () => undefined,
@@ -224,11 +225,44 @@ after := 0;
     "demo.ipynb-cell-3",
     "notebook cell temp filenames should be filesystem-safe"
   );
+
+  const firstCellDocument = testDocument("x := 41;\nhelper := function(n)\n  return n + x;\nend;\n", "gap-cell://demo/1");
+  const secondCellDocument = testDocument("y := helper(1);\n", "gap-cell://demo/2");
+  const notebook = {
+    uri: {
+      fsPath: "C:\\work\\demo.ipynb"
+    },
+    getCells: () => cells
+  };
+  const cells = [
+    {
+      index: 0,
+      kind: 2,
+      notebook,
+      document: firstCellDocument
+    },
+    {
+      index: 1,
+      kind: 2,
+      notebook,
+      document: secondCellDocument
+    }
+  ];
+  visibleNotebookEditors.push({ notebook });
+  assert.strictEqual(
+    extension.__test.previousGapNotebookCellsText(cells[1]),
+    firstCellDocument.getText().trimEnd(),
+    "notebook debug preludes should include previous GAP cells"
+  );
+  const analysisContext = extension.__test.documentAnalysisContext(secondCellDocument);
+  assert(analysisContext.text.includes("helper := function"), "notebook analysis should include previous GAP cells");
+  assert(analysisContext.text.endsWith(secondCellDocument.getText()), "notebook analysis should end with the active cell text");
+  assert.strictEqual(analysisContext.lineOffset, 5, "notebook analysis should report the active cell line offset");
 } finally {
   Module._load = originalLoad;
 }
 
-function testDocument(text) {
+function testDocument(text, uriText = "memory://test.g") {
   const lineStarts = [0];
   for (let index = 0; index < text.length; index += 1) {
     if (text[index] === "\n") {
@@ -238,6 +272,9 @@ function testDocument(text) {
   const lines = text.split(/\n/);
   return {
     languageId: "gap",
+    uri: {
+      toString: () => uriText
+    },
     lineCount: lines.length,
     getText: () => text,
     lineAt: (line) => ({ text: lines[line] || "" }),

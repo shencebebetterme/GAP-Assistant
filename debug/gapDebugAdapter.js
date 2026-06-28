@@ -254,7 +254,8 @@ class GapDebugAdapter {
     this.temporaryProgramDirectory = normalizePath(this.launchArgs.temporaryProgramDirectory);
 
     const instrumented = instrumentGapSource(source, sourcePath, {
-      maxValueLength: this.launchArgs.maxValueLength
+      maxValueLength: this.launchArgs.maxValueLength,
+      runtimePrelude: this.launchArgs.runtimePrelude
     });
     this.probesByPath.set(sourcePath, instrumented.probes);
     this.probesById = new Map(instrumented.probes.map((probe) => [probe.id, probe]));
@@ -273,7 +274,7 @@ class GapDebugAdapter {
     args.push(this.instrumentedRuntimePath);
 
     this.runtime = childProcess.spawn(command, args, {
-      cwd: path.dirname(program),
+      cwd: normalizePath(this.launchArgs.cwd) || path.dirname(program),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });

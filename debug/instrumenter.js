@@ -8,6 +8,7 @@ function instrumentGapSource(text, sourcePath, options = {}) {
   const lineStarts = computeLineStarts(text);
   const ast = parseGapSource(text);
   const probes = collectProbeMetadata(text, sourcePath, ast, lineStarts);
+  const runtimePrelude = normalizeRuntimePrelude(options.runtimePrelude);
   const insertions = probes.map((probe) => ({
     offset: probe.offset,
     text: probeCall(probe, options),
@@ -21,8 +22,8 @@ function instrumentGapSource(text, sourcePath, options = {}) {
     lineStarts,
     probes,
     prelude,
-    lineMap: buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions),
-    instrumented: `${prelude}\n${instrumented}\nQUIT;\n`
+    lineMap: buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions, runtimePrelude),
+    instrumented: `${prelude}\n${runtimePrelude ? `${runtimePrelude}\n` : ""}${instrumented}\nQUIT;\n`
   };
 }
 
@@ -208,7 +209,7 @@ function applyInsertions(text, insertions) {
   return result;
 }
 
-function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions) {
+function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions, runtimePrelude = "") {
   const lineMap = [];
   let generatedLine = 1;
 
@@ -240,6 +241,10 @@ function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, inserti
 
   appendText(prelude);
   appendText("\n");
+  if (runtimePrelude) {
+    appendText(runtimePrelude);
+    appendText("\n");
+  }
 
   let offset = 0;
   for (const insertion of [...insertions].sort((left, right) => left.offset - right.offset)) {
@@ -256,6 +261,11 @@ function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, inserti
   appendText("\nQUIT;\n");
 
   return lineMap;
+}
+
+function normalizeRuntimePrelude(value) {
+  const text = typeof value === "string" ? value.trimEnd() : "";
+  return text;
 }
 
 function gapDebugPrelude(options = {}) {

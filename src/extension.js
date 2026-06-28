@@ -134,19 +134,77 @@ function updateGapDiagnostics(document, analyzer, collection) {
     return;
   }
 
-  const analysis = analyzer.analyze(document.getText(), document.uri.toString());
-  const diagnostics = analysis.diagnostics.map((diagnostic) => {
-    const range = new vscode.Range(
-      new vscode.Position(diagnostic.range.start.line, diagnostic.range.start.character),
-      new vscode.Position(diagnostic.range.end.line, diagnostic.range.end.character)
-    );
-    const item = new vscode.Diagnostic(range, diagnostic.message, diagnosticSeverity(diagnostic.severity));
-    item.source = diagnostic.source;
-    item.code = diagnostic.code;
-    return item;
-  });
+  const context = documentAnalysisContext(document);
+  const analysis = analyzer.analyze(context.text, document.uri.toString());
+  const diagnostics = analysis.diagnostics
+    .filter((diagnostic) => diagnostic.range && diagnostic.range.start && diagnostic.range.start.line >= context.lineOffset)
+    .map((diagnostic) => adjustDiagnosticLineOffset(diagnostic, context.lineOffset))
+    .map((diagnostic) => {
+      const range = new vscode.Range(
+        new vscode.Position(diagnostic.range.start.line, diagnostic.range.start.character),
+        new vscode.Position(diagnostic.range.end.line, diagnostic.range.end.character)
+      );
+      const item = new vscode.Diagnostic(range, diagnostic.message, diagnosticSeverity(diagnostic.severity));
+      item.source = diagnostic.source;
+      item.code = diagnostic.code;
+      return item;
+    });
 
   collection.set(document.uri, diagnostics);
+}
+
+function documentAnalysisContext(document) {
+  if (!document || document.languageId !== "gap") {
+    return {
+      text: document ? document.getText() : "",
+      lineOffset: 0
+    };
+  }
+
+  const cell = findNotebookCellByUri(document.uri);
+  if (!cell) {
+    return {
+      text: document.getText(),
+      lineOffset: 0
+    };
+  }
+
+  const prefix = previousGapNotebookCellsText(cell);
+  if (!prefix) {
+    return {
+      text: document.getText(),
+      lineOffset: 0
+    };
+  }
+
+  const prefixWithSeparator = `${prefix}\n\n`;
+  return {
+    text: `${prefixWithSeparator}${document.getText()}`,
+    lineOffset: newlineCount(prefixWithSeparator)
+  };
+}
+
+function adjustDiagnosticLineOffset(diagnostic, lineOffset) {
+  if (!lineOffset) {
+    return diagnostic;
+  }
+  return {
+    ...diagnostic,
+    range: {
+      start: {
+        line: Math.max(0, diagnostic.range.start.line - lineOffset),
+        character: diagnostic.range.start.character
+      },
+      end: {
+        line: Math.max(0, diagnostic.range.end.line - lineOffset),
+        character: diagnostic.range.end.character
+      }
+    }
+  };
+}
+
+function newlineCount(text) {
+  return (String(text || "").match(/\n/g) || []).length;
 }
 
 function diagnosticSeverity(severity) {
@@ -377,12 +435,15 @@ class GapHoverProvider {
   inferenceHover(document, position) {
     const key = `${document.uri.toString()}@${document.version}`;
     let analysis = this.analysisCache.get(key);
+    let context = analysis && analysis.context;
     if (!analysis) {
-      analysis = this.analyzer.analyze(document.getText(), document.uri.toString());
+      context = documentAnalysisContext(document);
+      analysis = this.analyzer.analyze(context.text, document.uri.toString());
+      analysis.context = context;
       this.analysisCache.clear();
       this.analysisCache.set(key, analysis);
     }
-    return analysis.hoverAt(position.line, position.character);
+    return analysis.hoverAt(position.line + ((context && context.lineOffset) || 0), position.character);
   }
 
   clearAnalysisCache() {
@@ -937,14 +998,17 @@ async function debugCurrentNotebookCell(resource, outputChannel = activeDebugOut
   await fs.promises.writeFile(program, text, "utf8");
 
   const breakpoints = currentFileBreakpoints(cell.document.uri);
+  const notebookUri = cell.notebook && cell.notebook.uri;
   const configuration = {
     type: "gap",
     request: "launch",
     name: "Debug GAP Notebook Cell",
     program,
+    cwd: notebookUri && notebookUri.fsPath ? path.dirname(notebookUri.fsPath) : undefined,
     sourcePath: cell.document.uri.toString(),
     sourceName: notebookCellSourceName(cell),
     temporaryProgramDirectory: tempDir,
+    runtimePrelude: previousGapNotebookCellsText(cell),
     breakpoints,
     stopOnEntry: breakpoints.length === 0
   };
@@ -955,7 +1019,6 @@ async function debugCurrentNotebookCell(resource, outputChannel = activeDebugOut
   }
 
   try {
-    const notebookUri = cell.notebook && cell.notebook.uri;
     const started = await vscode.debug.startDebugging(
       notebookUri ? vscode.workspace.getWorkspaceFolder(notebookUri) : undefined,
       configuration
@@ -1059,6 +1122,32 @@ function notebookCells(notebook) {
     return notebook.cells;
   }
   return [];
+}
+
+function previousGapNotebookCellsText(cell) {
+  return previousGapNotebookCells(cell)
+    .map((candidate) => candidate.document.getText().trimEnd())
+    .filter((text) => text.trim())
+    .join("\n\n");
+}
+
+function previousGapNotebookCells(cell) {
+  const notebook = cell && cell.notebook;
+  const cells = notebookCells(notebook);
+  if (cells.length === 0) {
+    return [];
+  }
+
+  const currentIndex = Number.isInteger(cell.index)
+    ? cell.index
+    : cells.findIndex((candidate) => candidate && candidate.document && cell.document && candidate.document.uri.toString() === cell.document.uri.toString());
+  if (currentIndex <= 0) {
+    return [];
+  }
+
+  return cells
+    .slice(0, currentIndex)
+    .filter(isGapNotebookCell);
 }
 
 function attachNotebook(cell, notebook) {
@@ -1198,10 +1287,12 @@ module.exports = {
     currentFileBreakpoints,
     debugCurrentFile,
     debugCurrentNotebookCell,
+    documentAnalysisContext,
     gapInlineValuesForDocument,
     groupEntries,
     notebookCellFileBaseName,
     notebookCellSourceName,
+    previousGapNotebookCellsText,
     normalizeRuntimeErrorEvent,
     resolveManualFilePath,
     runtimeErrorDecorationOptions
