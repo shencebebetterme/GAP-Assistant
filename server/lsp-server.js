@@ -3,13 +3,21 @@
 const fs = require("fs");
 const path = require("path");
 const { GapAnalyzer, formatInferenceMarkdown } = require("./analyzer");
+const { createFileIncludeResolver, fileUriToPath, pathToUri } = require("./includes");
 
 const docsPath = path.join(__dirname, "..", "data", "gap-docs.json");
 const declarationsPath = path.join(__dirname, "..", "data", "gap-declarations.json");
 const docs = JSON.parse(fs.readFileSync(docsPath, "utf8"));
 const declarations = JSON.parse(fs.readFileSync(declarationsPath, "utf8"));
-const analyzer = new GapAnalyzer(docs, declarations);
 const documents = new Map();
+let workspaceRoots = [process.cwd()];
+const analyzer = new GapAnalyzer(docs, declarations, {
+  resolveInclude: createFileIncludeResolver({
+    workspaceRoots: () => workspaceRoots,
+    readDocumentText: (uri) => documents.get(uri),
+    readDocumentTextByPath: (filePath) => documents.get(pathToUri(filePath))
+  })
+});
 
 let buffer = Buffer.alloc(0);
 
@@ -46,6 +54,7 @@ function drainMessages() {
 
 function handleMessage(message) {
   if (message.method === "initialize") {
+    workspaceRoots = initializeWorkspaceRoots(message.params);
     respond(message.id, {
       capabilities: {
         textDocumentSync: 1,
@@ -108,6 +117,20 @@ function handleMessage(message) {
   if (message.id !== undefined) {
     respondError(message.id, -32601, `Unsupported method: ${message.method}`);
   }
+}
+
+function initializeWorkspaceRoots(params = {}) {
+  const roots = [];
+  if (typeof params.rootUri === "string") {
+    const rootPath = fileUriToPath(params.rootUri);
+    if (rootPath) {
+      roots.push(rootPath);
+    }
+  }
+  if (typeof params.rootPath === "string") {
+    roots.push(params.rootPath);
+  }
+  return roots.length > 0 ? roots : [process.cwd()];
 }
 
 function respond(id, result) {

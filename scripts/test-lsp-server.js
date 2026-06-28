@@ -2,7 +2,10 @@
 
 const assert = require("assert");
 const childProcess = require("child_process");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 const root = path.resolve(__dirname, "..");
 const serverPath = path.join(root, "server", "lsp-server.js");
@@ -208,6 +211,63 @@ async function main() {
   assert(hasHoverText(functionHover.result.contents.value, "list or collection"), "function hover should include body-derived input requirement in the signature");
   assert(!functionHover.result.contents.value.includes("permutation group"), "function hover should not narrow requirements to one call-site type");
   assert(!functionHover.result.contents.value.includes("Source:"), "function hover should not include internal source lines");
+
+  const includeDir = fs.mkdtempSync(path.join(os.tmpdir(), "gap-assist-lsp-includes-"));
+  try {
+    const yPath = path.join(includeDir, "y.g");
+    const xPath = path.join(includeDir, "x.g");
+    fs.writeFileSync(yPath, [
+      "NeedsGroup := function(obj)",
+      "    return GeneratorsOfGroup(obj);",
+      "end;",
+      ""
+    ].join("\n"), "utf8");
+    const xText = [
+      "Read(\"y.g\");",
+      "G := SymmetricGroup(4);",
+      "gens := NeedsGroup(G);",
+      "bad := NeedsGroup(5);",
+      ""
+    ].join("\n");
+    const xUri = pathToFileURL(xPath).toString();
+
+    send({
+      method: "textDocument/didOpen",
+      params: {
+        textDocument: {
+          uri: xUri,
+          languageId: "gap",
+          version: 1,
+          text: xText
+        }
+      }
+    });
+
+    const includeDiagnostics = await waitForNotification("textDocument/publishDiagnostics", (params) => params.uri === xUri);
+    const importedCallDiagnostics = includeDiagnostics.params.diagnostics.filter((diagnostic) => diagnostic.code === "user-call-argument-filter");
+    assert.strictEqual(importedCallDiagnostics.length, 1, "server diagnostics should see functions imported with Read");
+    assert(importedCallDiagnostics[0].message.includes("NeedsGroup argument 1 may fail"), "server diagnostic should name the imported function");
+
+    send({
+      id: 7,
+      method: "textDocument/hover",
+      params: {
+        textDocument: {
+          uri: xUri
+        },
+        position: {
+          line: 2,
+          character: 10
+        }
+      }
+    });
+
+    const includeHover = await waitForResponse(7);
+    assert(includeHover.result.contents.value.includes("```gap\nfunction("), "server hover should show imported function signatures");
+    assert(hasHoverText(includeHover.result.contents.value, "obj: group"), "server hover should include imported function parameter inference");
+  } finally {
+    fs.rmSync(includeDir, { recursive: true, force: true });
+  }
 
   send({ id: 3, method: "shutdown", params: null });
   await waitForResponse(3);

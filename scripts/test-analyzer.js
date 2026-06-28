@@ -1,8 +1,12 @@
 "use strict";
 
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { pathToFileURL } = require("url");
 const { GapAnalyzer, formatInferenceMarkdown } = require("../server/analyzer");
+const { createFileIncludeResolver } = require("../server/includes");
 const { loadDeclarations, loadDocumentation } = require("../src/docs");
 
 const root = path.resolve(__dirname, "..");
@@ -849,5 +853,53 @@ assert.strictEqual(callbackDiagnostics.length, 1, "non-boolean predicate callbac
 assert(callbackDiagnostics[0].message.includes("ForAny callback should return a boolean"), "predicate diagnostic should identify the operation");
 assert(callbackDiagnostics[0].message.includes("got integer"), "predicate diagnostic should include the callback body type");
 assert.strictEqual(callbackDiagnostics[0].range.start.line, 4, "predicate diagnostic should point at the callback body line");
+
+const includeDir = fs.mkdtempSync(path.join(os.tmpdir(), "gap-assist-includes-"));
+try {
+  const yPath = path.join(includeDir, "y.g");
+  const xPath = path.join(includeDir, "x.g");
+  fs.writeFileSync(yPath, [
+    "NeedsGroup := function(obj)",
+    "    return GeneratorsOfGroup(obj);",
+    "end;",
+    "",
+    "SquareList := function(n)",
+    "    return List([1 .. n], i -> i * i);",
+    "end;",
+    ""
+  ].join("\n"), "utf8");
+  const includingSource = [
+    "Read(\"y.g\");",
+    "G := SymmetricGroup(4);",
+    "gens := NeedsGroup(G);",
+    "bad := NeedsGroup(5);",
+    "values := SquareList(4);",
+    ""
+  ].join("\n");
+  fs.writeFileSync(xPath, includingSource, "utf8");
+
+  const includeAnalyzer = new GapAnalyzer(docs, declarations, {
+    resolveInclude: createFileIncludeResolver({ workspaceRoots: [includeDir] })
+  });
+  const includeAnalysis = includeAnalyzer.analyze(includingSource, pathToFileURL(xPath).toString());
+  const includeScope = includeAnalysis.scopes[0];
+  const importedNeedsGroup = includeScope.symbols.get("NeedsGroup");
+  assert(importedNeedsGroup && importedNeedsGroup.returnType.filters.includes("IsList"), "Read(\"y.g\") should import user functions into x.g analysis");
+
+  const includedHover = includeAnalysis.hoverAt(2, 10);
+  assert(includedHover && includedHover.symbol.name === "NeedsGroup", "hover in x.g should resolve a function defined in y.g");
+  const includedHoverMarkdown = formatInferenceMarkdown(includedHover);
+  assertHoverText(includedHoverMarkdown, "obj: group", "included function hover should keep inferred parameter filters");
+
+  const valuesFromInclude = includeScope.symbols.get("values");
+  assert(valuesFromInclude && valuesFromInclude.type.filters.includes("IsList"), "calls to included functions should use their inferred return type");
+
+  const includeDiagnostics = includeAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "user-call-argument-filter");
+  assert.strictEqual(includeDiagnostics.length, 1, "x.g should diagnose incompatible calls to functions imported from y.g");
+  assert(includeDiagnostics[0].message.includes("NeedsGroup argument 1 may fail"), "included function diagnostics should identify the imported function");
+  assert.strictEqual(includeDiagnostics[0].range.start.line, 3, "included function diagnostic should point inside x.g");
+} finally {
+  fs.rmSync(includeDir, { recursive: true, force: true });
+}
 
 console.log("Analyzer tests passed.");

@@ -7,6 +7,7 @@ const vscode = require("vscode");
 const { getEntries, isIdentifier, loadDeclarations, loadDocumentation } = require("./docs");
 const { GapLanguageServerClient } = require("./lspClient");
 const { GapAnalyzer, formatInferenceMarkdown } = require("../server/analyzer");
+const { createFileIncludeResolver } = require("../server/includes");
 const { parseGapSource } = require("../server/parser");
 
 const GAP_SELECTOR = { language: "gap" };
@@ -28,7 +29,9 @@ function activate(context) {
     return;
   }
 
-  const analyzer = new GapAnalyzer(docs, declarations);
+  const analyzer = new GapAnalyzer(docs, declarations, {
+    resolveInclude: createGapIncludeResolver()
+  });
   const diagnosticCollection = vscode.languages.createDiagnosticCollection("gap");
   const debugOutputChannel = vscode.window.createOutputChannel("GAP Debugger");
   activeDebugOutputChannel = debugOutputChannel;
@@ -36,6 +39,7 @@ function activate(context) {
     cwd: context.extensionPath,
     timeoutMs: 1000
   });
+  const hoverProvider = new GapHoverProvider(docs, analyzer, languageServerClient);
   activeLanguageServerClient = languageServerClient;
   languageServerClient.ensureStarted().catch(() => {});
 
@@ -48,7 +52,7 @@ function activate(context) {
       new GapDebugAdapterDescriptorFactory(context.extensionPath, debugOutputChannel)
     ),
     vscode.debug.registerDebugConfigurationProvider("gap", new GapDebugConfigurationProvider()),
-    vscode.languages.registerHoverProvider(GAP_SELECTOR, new GapHoverProvider(docs, analyzer, languageServerClient)),
+    vscode.languages.registerHoverProvider(GAP_SELECTOR, hoverProvider),
     registerInlineValuesProvider(),
     registerRuntimeErrorDecorationSupport(),
     vscode.languages.registerDocumentSemanticTokensProvider(
@@ -56,20 +60,71 @@ function activate(context) {
       new GapSemanticTokensProvider(docs),
       SEMANTIC_LEGEND
     ),
-    vscode.workspace.onDidOpenTextDocument((document) => updateGapDiagnostics(document, analyzer, diagnosticCollection)),
-    vscode.workspace.onDidChangeTextDocument((event) => updateGapDiagnostics(event.document, analyzer, diagnosticCollection)),
-    vscode.workspace.onDidCloseTextDocument((document) => diagnosticCollection.delete(document.uri)),
+    vscode.workspace.onDidOpenTextDocument((document) => handleGapDocumentChanged(document, analyzer, diagnosticCollection, hoverProvider)),
+    vscode.workspace.onDidChangeTextDocument((event) => handleGapDocumentChanged(event.document, analyzer, diagnosticCollection, hoverProvider)),
+    vscode.workspace.onDidCloseTextDocument((document) => handleGapDocumentClosed(document, analyzer, diagnosticCollection, hoverProvider)),
     vscode.commands.registerCommand("gapReference.openLocalManual", (target) => openLocalManual(context, docs, target)),
     vscode.commands.registerCommand("gapReference.debugCurrentFile", (resource) => debugCurrentFile(resource, debugOutputChannel))
   );
 
-  for (const document of vscode.workspace.textDocuments || []) {
-    updateGapDiagnostics(document, analyzer, diagnosticCollection);
-  }
+  updateAllGapDiagnostics(analyzer, diagnosticCollection);
 }
 
 function deactivate() {
   return activeLanguageServerClient ? activeLanguageServerClient.dispose() : undefined;
+}
+
+function createGapIncludeResolver() {
+  return createFileIncludeResolver({
+    workspaceRoots: () => (vscode.workspace.workspaceFolders || [])
+      .map((folder) => folder && folder.uri && folder.uri.fsPath)
+      .filter(Boolean),
+    readDocumentText: readOpenGapDocumentByUri,
+    readDocumentTextByPath: readOpenGapDocumentByPath
+  });
+}
+
+function readOpenGapDocumentByUri(uri) {
+  const document = (vscode.workspace.textDocuments || [])
+    .find((candidate) => candidate && candidate.uri && candidate.uri.toString() === uri);
+  return document && document.languageId === "gap" ? document.getText() : undefined;
+}
+
+function readOpenGapDocumentByPath(filePath) {
+  const target = normalizeFsPathKey(filePath);
+  const document = (vscode.workspace.textDocuments || [])
+    .find((candidate) => candidate && candidate.uri && normalizeFsPathKey(candidate.uri.fsPath) === target);
+  return document && document.languageId === "gap" ? document.getText() : undefined;
+}
+
+function normalizeFsPathKey(filePath) {
+  if (typeof filePath !== "string" || filePath.trim() === "") {
+    return "";
+  }
+  const normalized = path.resolve(filePath);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function handleGapDocumentChanged(document, analyzer, collection, hoverProvider) {
+  if (!document || document.languageId !== "gap") {
+    return;
+  }
+  hoverProvider.clearAnalysisCache();
+  updateAllGapDiagnostics(analyzer, collection);
+}
+
+function handleGapDocumentClosed(document, analyzer, collection, hoverProvider) {
+  hoverProvider.clearAnalysisCache();
+  if (document && document.languageId === "gap") {
+    collection.delete(document.uri);
+    updateAllGapDiagnostics(analyzer, collection);
+  }
+}
+
+function updateAllGapDiagnostics(analyzer, collection) {
+  for (const document of vscode.workspace.textDocuments || []) {
+    updateGapDiagnostics(document, analyzer, collection);
+  }
 }
 
 function updateGapDiagnostics(document, analyzer, collection) {
@@ -326,6 +381,10 @@ class GapHoverProvider {
       this.analysisCache.set(key, analysis);
     }
     return analysis.hoverAt(position.line, position.character);
+  }
+
+  clearAnalysisCache() {
+    this.analysisCache.clear();
   }
 }
 

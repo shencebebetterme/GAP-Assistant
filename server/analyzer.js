@@ -2,6 +2,7 @@
 
 const { parseGapSource } = require("./parser");
 const { formatInferenceMarkdown } = require("./hoverFormatter");
+const { findReadIncludes } = require("./includes");
 
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TERMINATING_CALLS = new Set(["ErrorNoReturn", "TryNextMethod"]);
@@ -30,28 +31,33 @@ const DOCUMENTED_RETURN_OVERRIDES = {
 };
 
 class GapAnalyzer {
-  constructor(docs, declarations) {
+  constructor(docs, declarations, options = {}) {
     this.docs = docs || { entries: {}, names: [] };
     this.declarations = declarations || { declarations: {}, names: [] };
     this.docsNameSet = new Set(this.docs.names || []);
+    this.options = options || {};
   }
 
-  analyze(text, uri = "") {
-    return analyzeGapText(text, this.docs, uri, this.declarations);
+  analyze(text, uri = "", options = {}) {
+    return analyzeGapText(text, this.docs, uri, this.declarations, {
+      ...this.options,
+      ...options
+    });
   }
 
-  hoverAt(text, line, character, uri = "") {
-    const analysis = this.analyze(text, uri);
+  hoverAt(text, line, character, uri = "", options = {}) {
+    const analysis = this.analyze(text, uri, options);
     return analysis.hoverAt(line, character);
   }
 }
 
-function analyzeGapText(text, docs, uri = "", declarations = { declarations: {}, names: [] }) {
+function analyzeGapText(text, docs, uri = "", declarations = { declarations: {}, names: [] }, options = {}) {
   const lineStarts = computeLineStarts(text);
   const masked = maskCommentsAndStrings(text);
   const ast = parseGapSource(text);
   const globalScope = createScope("global", 0, text.length, undefined);
   globalScope.lineStarts = lineStarts;
+  seedGlobalScopeFromIncludes(globalScope, ast, docs, uri, declarations, options);
   const diagnostics = [];
   const functions = [];
   const scopes = [globalScope];
@@ -100,6 +106,89 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
   };
 
   return document;
+}
+
+function seedGlobalScopeFromIncludes(globalScope, ast, docs, uri, declarations, options) {
+  if (!options || typeof options.resolveInclude !== "function") {
+    return;
+  }
+
+  const includeStack = includeStackWithUri(options.includeStack, uri);
+  for (const reference of findReadIncludes(ast)) {
+    let resolved;
+    try {
+      resolved = options.resolveInclude({
+        fromUri: uri,
+        includePath: reference.path,
+        reference
+      });
+    } catch (_) {
+      resolved = undefined;
+    }
+
+    if (!resolved || typeof resolved.text !== "string") {
+      continue;
+    }
+
+    const resolvedUri = resolved.uri || resolved.fsPath || reference.path;
+    const key = includeIdentity(resolvedUri);
+    if (key && includeStack.has(key)) {
+      continue;
+    }
+
+    const nestedStack = new Set(includeStack);
+    if (key) {
+      nestedStack.add(key);
+    }
+
+    const includedAnalysis = analyzeGapText(resolved.text, docs, resolvedUri, declarations, {
+      ...options,
+      includeStack: nestedStack
+    });
+    const includedGlobalScope = includedAnalysis && includedAnalysis.scopes && includedAnalysis.scopes[0];
+    mergeIncludedGlobalSymbols(globalScope, includedGlobalScope, resolvedUri);
+  }
+}
+
+function includeStackWithUri(stack, uri) {
+  const result = new Set(stack || []);
+  const key = includeIdentity(uri);
+  if (key) {
+    result.add(key);
+  }
+  return result;
+}
+
+function includeIdentity(uri) {
+  if (typeof uri !== "string" || uri.trim() === "") {
+    return "";
+  }
+  const normalized = uri.replace(/\\/g, "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function mergeIncludedGlobalSymbols(targetScope, includedScope, uri) {
+  if (!includedScope || !includedScope.symbols) {
+    return;
+  }
+
+  for (const [name, symbol] of includedScope.symbols) {
+    if (!IDENTIFIER_RE.test(name)) {
+      continue;
+    }
+    targetScope.symbols.set(name, cloneIncludedSymbol(symbol, uri));
+  }
+}
+
+function cloneIncludedSymbol(symbol, uri) {
+  if (!symbol || typeof symbol !== "object") {
+    return symbol;
+  }
+  return {
+    ...symbol,
+    importedFrom: uri,
+    parameters: Array.isArray(symbol.parameters) ? symbol.parameters.map((parameter) => ({ ...parameter })) : symbol.parameters
+  };
 }
 
 function analyzeStatements(statements, scope, data, functions, text, masked, lineStarts, scopes) {
