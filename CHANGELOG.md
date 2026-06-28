@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.7
+
+- Fixed notebook **Debug Cell** menu visibility for GAP Jupyter notebooks by using the selected GAP kernel context.
+- Added **Debug Cell** to the cell overflow actions as a fallback when VS Code does not show the execute-button dropdown.
+
 ## 0.4.6
 
 - Added **Debug Cell** to the notebook execute-button dropdown for GAP code cells.

@@ -65,6 +65,10 @@ function main() {
     if (!commands.includes("gapReference.debugCurrentFile")) {
       failures.push("package.json must contribute the GAP debug current file command");
     }
+    if (!commands.includes("gapReference.debugCurrentNotebookCell")) {
+      failures.push("package.json must contribute the GAP debug current notebook cell command");
+    }
+    validateNotebookDebugMenus(packageJson.contributes.menus, failures);
     const activationEvents = Array.isArray(packageJson.activationEvents) ? packageJson.activationEvents : [];
     if (!activationEvents.includes("onDebugResolve:gap")) {
       failures.push("package.json must activate before resolving GAP debug configurations");
@@ -134,6 +138,40 @@ function main() {
   console.log(`Validated GAP extension files.`);
   console.log(`Documentation names: ${docs.names.length}`);
   console.log(`Reference entries: ${Object.values(docs.entries).reduce((sum, entries) => sum + entries.length, 0)}`);
+}
+
+function validateNotebookDebugMenus(menus, failures) {
+  if (!menus || typeof menus !== "object") {
+    failures.push("package.json must contribute extension menus");
+    return;
+  }
+
+  const executeItems = Array.isArray(menus["notebook/cell/execute"]) ? menus["notebook/cell/execute"] : [];
+  const titleItems = Array.isArray(menus["notebook/cell/title"]) ? menus["notebook/cell/title"] : [];
+  const debugCommand = "gapReference.debugCurrentNotebookCell";
+  const gapKernelContext = "notebookKernel =~ /[Gg][Aa][Pp]/";
+
+  const hasExecuteDebug = executeItems.some((item) =>
+    item.command === debugCommand && typeof item.when === "string" && item.when.includes(gapKernelContext)
+  );
+  if (!hasExecuteDebug) {
+    failures.push("package.json must show Debug Cell in the notebook execute dropdown for GAP kernels");
+  }
+
+  const hasOverflowDebug = titleItems.some((item) =>
+    item.command === debugCommand &&
+    typeof item.when === "string" &&
+    item.when.includes(gapKernelContext) &&
+    typeof item.group === "string" &&
+    !item.group.startsWith("inline")
+  );
+  if (!hasOverflowDebug) {
+    failures.push("package.json must show Debug Cell in notebook cell overflow actions for GAP kernels");
+  }
+
+  if (JSON.stringify(menus).includes("notebookCellLangId")) {
+    failures.push("package.json notebook menus should not depend on notebookCellLangId");
+  }
 }
 
 function validateDeclarations(declarations, failures) {

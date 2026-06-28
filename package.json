@@ -2,7 +2,7 @@
   "name": "gap-assist",
   "displayName": "GAP Assist",
   "description": "Language intelligence, reference hovers, static analysis, and debugging for GAP.",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "publisher": "shencebebetterme",
   "license": "GPL-2.0-or-later",
   "icon": "assets/icon.png",
@@ -183,10 +183,17 @@
           "group": "navigation"
         }
       ],
+      "notebook/cell/title": [
+        {
+          "command": "gapReference.debugCurrentNotebookCell",
+          "when": "notebookType == jupyter-notebook && isWorkspaceTrusted && notebookCellType == code && notebookKernel =~ /[Gg][Aa][Pp]/",
+          "group": "debug@0"
+        }
+      ],
       "notebook/cell/execute": [
         {
           "command": "gapReference.debugCurrentNotebookCell",
-          "when": "notebookCellType == code && notebookCellLangId == gap",
+          "when": "notebookType == jupyter-notebook && isWorkspaceTrusted && notebookCellType == code && notebookKernel =~ /[Gg][Aa][Pp]/",
           "group": "jupyterCellExecute@0"
         }
       ]

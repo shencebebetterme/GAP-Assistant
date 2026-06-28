@@ -82,7 +82,7 @@ badPredicate := ForAll([1 .. 4], i -> i + 1);
 
 Open a `.g` file, set breakpoints in the editor gutter, then run **GAP: Debug Current File** from the command palette, editor title run menu, or editor context menu.
 
-For GAP code cells in notebooks, use **Debug Cell** from the run-button dropdown or run **GAP: Debug Current Notebook Cell** from the command palette. The command writes the active cell to a temporary `.g` file, prepends earlier GAP cells as runtime context, launches the GAP debugger, and maps stack frames and breakpoints back to the notebook cell.
+For GAP code cells in notebooks with a GAP kernel selected, use **Debug Cell** from the run-button dropdown, the cell **More Actions** menu, or run **GAP: Debug Current Notebook Cell** from the command palette. The command writes the active cell to a temporary `.g` file, prepends earlier GAP cells as runtime context, launches the GAP debugger, and maps stack frames and breakpoints back to the notebook cell.
 
 You can also use the Run and Debug view with this launch configuration:
 
