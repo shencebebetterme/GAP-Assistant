@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4
+
+- Added **GAP: Debug Current Notebook Cell** for GAP code cells in notebooks, using the existing GAP debugger with notebook-cell source mapping.
+
 ## 0.4.3
 
 - Fixed nested `List(..., i -> List(..., j -> ...))` callback inference so analyzer hovers keep working.

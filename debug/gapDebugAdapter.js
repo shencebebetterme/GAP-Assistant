@@ -35,6 +35,9 @@ class GapDebugAdapter {
     this.instrumentedPath = undefined;
     this.instrumentedRuntimePath = undefined;
     this.instrumentedLineMap = [];
+    this.sourceTextByPath = new Map();
+    this.sourceNameByPath = new Map();
+    this.temporaryProgramDirectory = undefined;
     this.pendingRuntimeError = undefined;
     this.runtimeErrorTimer = undefined;
     this.lastRuntimeError = undefined;
@@ -182,7 +185,7 @@ class GapDebugAdapter {
   }
 
   setBreakpoints(request) {
-    const sourcePath = normalizePath(request.arguments && request.arguments.source && request.arguments.source.path);
+    const sourcePath = normalizeSourcePath(request.arguments && request.arguments.source && request.arguments.source.path);
     const requested = (request.arguments && request.arguments.breakpoints) || [];
     const probeLines = sourcePath ? this.probeLinesForPath(sourcePath) : [];
     const breakpoints = [];
@@ -197,7 +200,7 @@ class GapDebugAdapter {
         id: this.nextBreakpointId,
         verified,
         line,
-        source: sourceFromPath(sourcePath)
+        source: this.sourceFromPath(sourcePath)
       };
       this.nextBreakpointId += 1;
       if (!verified) {
@@ -220,7 +223,7 @@ class GapDebugAdapter {
     }
 
     try {
-      const text = fs.readFileSync(sourcePath, "utf8");
+      const text = this.sourceTextByPath.get(sourcePath) || fs.readFileSync(sourcePath, "utf8");
       const probes = collectProbeMetadata(text, sourcePath);
       this.probesByPath.set(sourcePath, probes);
       return probes;
@@ -242,13 +245,21 @@ class GapDebugAdapter {
     }
 
     const source = fs.readFileSync(program, "utf8");
-    const instrumented = instrumentGapSource(source, program, {
+    const sourcePath = normalizeSourcePath(this.launchArgs.sourcePath || program);
+    const sourceName = this.launchArgs.sourceName ? String(this.launchArgs.sourceName) : undefined;
+    this.sourceTextByPath.set(sourcePath, source);
+    if (sourceName) {
+      this.sourceNameByPath.set(sourcePath, sourceName);
+    }
+    this.temporaryProgramDirectory = normalizePath(this.launchArgs.temporaryProgramDirectory);
+
+    const instrumented = instrumentGapSource(source, sourcePath, {
       maxValueLength: this.launchArgs.maxValueLength
     });
-    this.probesByPath.set(program, instrumented.probes);
+    this.probesByPath.set(sourcePath, instrumented.probes);
     this.probesById = new Map(instrumented.probes.map((probe) => [probe.id, probe]));
     this.instrumentedLineMap = instrumented.lineMap || [];
-    this.applyLaunchBreakpoints(program, this.launchArgs.breakpoints);
+    this.applyLaunchBreakpoints(sourcePath, this.launchArgs.breakpoints);
 
     this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gap-debug-"));
     const instrumentedPath = path.join(this.tempDir, `${path.basename(program)}.debug.g`);
@@ -330,12 +341,12 @@ class GapDebugAdapter {
     }
   }
 
-  applyLaunchBreakpoints(program, requestedBreakpoints) {
+  applyLaunchBreakpoints(sourcePath, requestedBreakpoints) {
     if (!Array.isArray(requestedBreakpoints) || requestedBreakpoints.length === 0) {
       return;
     }
 
-    const sourcePath = normalizePath(program);
+    sourcePath = normalizeSourcePath(sourcePath);
     const probes = this.probesByPath.get(sourcePath) || [];
     const stored = this.breakpointsByPath.get(sourcePath) || new Map();
     for (const requestedBreakpoint of requestedBreakpoints) {
@@ -352,7 +363,7 @@ class GapDebugAdapter {
           id: this.nextBreakpointId,
           verified: true,
           line: probe.line,
-          source: sourceFromPath(sourcePath)
+          source: this.sourceFromPath(sourcePath)
         });
         this.nextBreakpointId += 1;
       }
@@ -466,7 +477,7 @@ class GapDebugAdapter {
 
   decideProbeHit(hit) {
     const probe = this.probesById.get(hit.id) || hit;
-    const breakpoints = this.breakpointsByPath.get(normalizePath(probe.sourcePath)) || new Map();
+    const breakpoints = this.breakpointsByPath.get(normalizeSourcePath(probe.sourcePath)) || new Map();
     const breakpoint = breakpoints.get(probe.line);
     const firstStop = this.launchArgs && this.launchArgs.stopOnEntry && !this.currentProbe;
     const shouldStep = this.shouldStopForStep(probe);
@@ -527,7 +538,7 @@ class GapDebugAdapter {
     const frame = {
       id: 1,
       name: this.currentProbe.functionName || "GAP",
-      source: sourceFromPath(this.currentProbe.sourcePath),
+      source: this.sourceFromPath(this.currentProbe.sourcePath),
       line: this.currentProbe.line,
       column: this.currentProbe.column || 1
     };
@@ -658,13 +669,20 @@ class GapDebugAdapter {
   }
 
   source(request) {
-    const sourcePath = request.arguments && request.arguments.source && request.arguments.source.path;
+    const sourcePath = normalizeSourcePath(request.arguments && request.arguments.source && request.arguments.source.path);
     if (!sourcePath) {
       this.sendResponse(request, { content: "", mimeType: "text/plain" });
       return;
     }
 
     try {
+      if (this.sourceTextByPath.has(sourcePath)) {
+        this.sendResponse(request, {
+          content: this.sourceTextByPath.get(sourcePath),
+          mimeType: "text/x-gap"
+        });
+        return;
+      }
       this.sendResponse(request, {
         content: fs.readFileSync(sourcePath, "utf8"),
         mimeType: "text/x-gap"
@@ -682,6 +700,10 @@ class GapDebugAdapter {
     }
     this.cleanupTempDir();
     this.sendEvent("terminated");
+  }
+
+  sourceFromPath(sourcePath) {
+    return sourceFromPath(sourcePath, this.sourceNameByPath.get(normalizeSourcePath(sourcePath)));
   }
 
   writeRuntimeCommand(command) {
@@ -732,15 +754,21 @@ class GapDebugAdapter {
     }
     this.pendingRuntimeError = undefined;
 
-    if (!this.tempDir) {
-      return;
+    if (this.tempDir) {
+      fs.rmSync(this.tempDir, {
+        recursive: true,
+        force: true
+      });
+      this.tempDir = undefined;
     }
 
-    fs.rmSync(this.tempDir, {
-      recursive: true,
-      force: true
-    });
-    this.tempDir = undefined;
+    if (isNotebookTemporaryProgramDirectory(this.temporaryProgramDirectory)) {
+      fs.rmSync(this.temporaryProgramDirectory, {
+        recursive: true,
+        force: true
+      });
+    }
+    this.temporaryProgramDirectory = undefined;
   }
 }
 
@@ -796,11 +824,45 @@ function normalizePath(value) {
   return value ? path.normalize(value) : "";
 }
 
-function sourceFromPath(sourcePath) {
+function isNotebookTemporaryProgramDirectory(directory) {
+  if (!directory) {
+    return false;
+  }
+  const normalized = path.resolve(directory);
+  const tempRoot = path.resolve(os.tmpdir());
+  const relative = path.relative(tempRoot, normalized);
+  return Boolean(relative && !relative.startsWith("..") && !path.isAbsolute(relative) && path.basename(normalized).startsWith("gap-notebook-cell-"));
+}
+
+function normalizeSourcePath(value) {
+  const text = String(value || "");
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(text)) {
+    return text;
+  }
+  return normalizePath(text);
+}
+
+function sourceFromPath(sourcePath, sourceName) {
   return {
-    name: sourcePath ? path.basename(sourcePath) : "GAP",
+    name: sourceName || sourceNameFromPath(sourcePath),
     path: sourcePath
   };
+}
+
+function sourceNameFromPath(sourcePath) {
+  if (!sourcePath) {
+    return "GAP";
+  }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(sourcePath)) {
+    try {
+      const parsed = new URL(sourcePath);
+      const pathname = decodeURIComponent(parsed.pathname || "");
+      return path.basename(pathname) || "GAP notebook cell";
+    } catch (_) {
+      return "GAP notebook cell";
+    }
+  }
+  return path.basename(sourcePath);
 }
 
 function nearestProbeForLine(probes, line) {
@@ -966,6 +1028,7 @@ if (require.main === module) {
 
 module.exports = {
   GapDebugAdapter,
+  normalizeSourcePath,
   parseHitLine,
   parseVariableLine,
   rewriteInstrumentedLocations,

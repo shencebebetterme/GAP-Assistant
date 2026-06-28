@@ -2,7 +2,7 @@
   "name": "gap-assist",
   "displayName": "GAP Assist",
   "description": "Language intelligence, reference hovers, static analysis, and debugging for GAP.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "publisher": "shencebebetterme",
   "license": "GPL-2.0-or-later",
   "icon": "assets/icon.png",
@@ -27,6 +27,7 @@
     "onLanguage:gap",
     "onCommand:gapReference.openLocalManual",
     "onCommand:gapReference.debugCurrentFile",
+    "onCommand:gapReference.debugCurrentNotebookCell",
     "onDebugResolve:gap"
   ],
   "main": "./src/extension.js",
@@ -158,6 +159,11 @@
         "command": "gapReference.debugCurrentFile",
         "title": "Debug Current File",
         "category": "GAP"
+      },
+      {
+        "command": "gapReference.debugCurrentNotebookCell",
+        "title": "Debug Current Notebook Cell",
+        "category": "GAP"
       }
     ],
     "menus": {
@@ -173,6 +179,13 @@
           "command": "gapReference.debugCurrentFile",
           "when": "resourceLangId == gap",
           "group": "navigation"
+        }
+      ],
+      "notebook/cell/title": [
+        {
+          "command": "gapReference.debugCurrentNotebookCell",
+          "when": "notebookCellType == code && notebookCellLangId == gap",
+          "group": "inline@10"
         }
       ]
     },

@@ -8,13 +8,32 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..");
 const adapterPath = path.join(root, "debug", "gapDebugAdapter.js");
-const { GapDebugAdapter, parseHitLine, parseVariableLine, rewriteInstrumentedLocations, runtimeVariableValue, unescapeField } = require("../debug/gapDebugAdapter");
+const { GapDebugAdapter, normalizeSourcePath, parseHitLine, parseVariableLine, rewriteInstrumentedLocations, runtimeVariableValue, unescapeField } = require("../debug/gapDebugAdapter");
+
+function unitSource(sourcePath, sourceName) {
+  const adapter = new GapDebugAdapter(process.stdin, { write() {} });
+  adapter.sourceNameByPath.set(sourcePath, sourceName);
+  return adapter.sourceFromPath(sourcePath);
+}
 
 if (!hasWslGap()) {
   console.log("Debug adapter smoke test skipped because wsl gap is unavailable.");
   process.exit(0);
 }
 
+assert.strictEqual(
+  normalizeSourcePath("vscode-notebook-cell:/home/user/demo.ipynb#cell-1"),
+  "vscode-notebook-cell:/home/user/demo.ipynb#cell-1",
+  "notebook cell source URI strings should not be normalized as filesystem paths"
+);
+assert.deepStrictEqual(
+  unitSource("vscode-notebook-cell:/home/user/demo.ipynb#cell-1", "demo.ipynb cell 1"),
+  {
+    name: "demo.ipynb cell 1",
+    path: "vscode-notebook-cell:/home/user/demo.ipynb#cell-1"
+  },
+  "adapter source objects should preserve notebook cell URIs and display names"
+);
 assert.strictEqual(
   unescapeField("C:\\\\GAP\\\\examples\\\\test.g"),
   "C:\\GAP\\examples\\test.g",

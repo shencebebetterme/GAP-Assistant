@@ -37,6 +37,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
         }
       },
       Hover: class Hover {},
+      NotebookCellKind: {
+        Code: 2
+      },
       Position: class Position {
         constructor(line, character) {
           this.line = line;
@@ -89,6 +92,8 @@ Module._load = function patchedLoad(request, parent, isMain) {
           show: () => undefined
         }),
         activeTextEditor: undefined,
+        activeNotebookEditor: undefined,
+        visibleNotebookEditors: [],
         visibleTextEditors: [],
         onDidChangeVisibleTextEditors: () => ({ dispose() {} }),
         showErrorMessage: () => undefined,
@@ -191,6 +196,33 @@ after := 0;
       details: "called from sample.g:7"
     },
     "runtime error decoration events should normalize source location and details"
+  );
+
+  const notebookCell = {
+    index: 2,
+    kind: 2,
+    notebook: {
+      uri: {
+        fsPath: "C:\\work\\demo.ipynb"
+      }
+    },
+    document: {
+      languageId: "gap",
+      uri: {
+        toString: () => "vscode-notebook-cell:/C%3A/work/demo.ipynb#W2sZmlsZQ%3D%3D"
+      },
+      getText: () => "x := 1;"
+    }
+  };
+  assert.strictEqual(
+    extension.__test.notebookCellSourceName(notebookCell),
+    "demo.ipynb cell 3",
+    "notebook cell debug source names should include notebook name and 1-based cell number"
+  );
+  assert.strictEqual(
+    extension.__test.notebookCellFileBaseName(notebookCell),
+    "demo.ipynb-cell-3",
+    "notebook cell temp filenames should be filesystem-safe"
   );
 } finally {
   Module._load = originalLoad;

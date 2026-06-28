@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const vscode = require("vscode");
@@ -64,7 +65,8 @@ function activate(context) {
     vscode.workspace.onDidChangeTextDocument((event) => handleGapDocumentChanged(event.document, analyzer, diagnosticCollection, hoverProvider)),
     vscode.workspace.onDidCloseTextDocument((document) => handleGapDocumentClosed(document, analyzer, diagnosticCollection, hoverProvider)),
     vscode.commands.registerCommand("gapReference.openLocalManual", (target) => openLocalManual(context, docs, target)),
-    vscode.commands.registerCommand("gapReference.debugCurrentFile", (resource) => debugCurrentFile(resource, debugOutputChannel))
+    vscode.commands.registerCommand("gapReference.debugCurrentFile", (resource) => debugCurrentFile(resource, debugOutputChannel)),
+    vscode.commands.registerCommand("gapReference.debugCurrentNotebookCell", (resource) => debugCurrentNotebookCell(resource, debugOutputChannel))
   );
 
   updateAllGapDiagnostics(analyzer, diagnosticCollection);
@@ -917,6 +919,173 @@ async function debugCurrentFile(resource, outputChannel = activeDebugOutputChann
   }
 }
 
+async function debugCurrentNotebookCell(resource, outputChannel = activeDebugOutputChannel) {
+  const cell = activeGapNotebookCell(resource);
+  if (!cell) {
+    vscode.window.showWarningMessage("Open a GAP notebook cell before starting the cell debugger.");
+    return;
+  }
+
+  const text = cell.document.getText();
+  if (!text.trim()) {
+    vscode.window.showWarningMessage("The active GAP notebook cell is empty.");
+    return;
+  }
+
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "gap-notebook-cell-"));
+  const program = path.join(tempDir, `${notebookCellFileBaseName(cell)}.g`);
+  await fs.promises.writeFile(program, text, "utf8");
+
+  const breakpoints = currentFileBreakpoints(cell.document.uri);
+  const configuration = {
+    type: "gap",
+    request: "launch",
+    name: "Debug GAP Notebook Cell",
+    program,
+    sourcePath: cell.document.uri.toString(),
+    sourceName: notebookCellSourceName(cell),
+    temporaryProgramDirectory: tempDir,
+    breakpoints,
+    stopOnEntry: breakpoints.length === 0
+  };
+
+  if (outputChannel) {
+    outputChannel.appendLine(`Starting GAP debug session for notebook cell ${configuration.sourceName}`);
+    outputChannel.appendLine(`Captured ${breakpoints.length} breakpoint(s) for this cell.`);
+  }
+
+  try {
+    const notebookUri = cell.notebook && cell.notebook.uri;
+    const started = await vscode.debug.startDebugging(
+      notebookUri ? vscode.workspace.getWorkspaceFolder(notebookUri) : undefined,
+      configuration
+    );
+    if (!started) {
+      if (outputChannel) {
+        outputChannel.appendLine("VS Code returned false from debug.startDebugging before launching the adapter.");
+        outputChannel.show(true);
+      }
+      await cleanupNotebookTempDir(tempDir);
+      vscode.window.showWarningMessage("GAP notebook cell debugger did not start. See the GAP Debugger output channel for details.");
+    }
+  } catch (error) {
+    await cleanupNotebookTempDir(tempDir);
+    if (outputChannel) {
+      outputChannel.appendLine(`GAP notebook cell debugger failed to start: ${error.message}`);
+      outputChannel.show(true);
+    }
+    vscode.window.showErrorMessage(`GAP notebook cell debugger failed to start: ${error.message}`);
+  }
+}
+
+function activeGapNotebookCell(resource) {
+  if (isGapNotebookCell(resource)) {
+    return resource;
+  }
+
+  const resourceCell = resource && findNotebookCellByUri(resourceUri(resource));
+  if (isGapNotebookCell(resourceCell)) {
+    return resourceCell;
+  }
+
+  const activeDocument = vscode.window.activeTextEditor && vscode.window.activeTextEditor.document;
+  const activeCell = activeDocument && findNotebookCellByUri(activeDocument.uri);
+  if (isGapNotebookCell(activeCell)) {
+    return activeCell;
+  }
+
+  const notebookEditor = vscode.window.activeNotebookEditor;
+  const selectedCell = notebookEditor && notebookCellAtSelection(notebookEditor);
+  return isGapNotebookCell(selectedCell) ? selectedCell : undefined;
+}
+
+async function cleanupNotebookTempDir(tempDir) {
+  try {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  } catch (_) {
+    // A started debug adapter owns this temp directory; only failed launches reach here.
+  }
+}
+
+function resourceUri(resource) {
+  if (!resource) {
+    return undefined;
+  }
+  if (resource.document && resource.document.uri) {
+    return resource.document.uri;
+  }
+  return typeof resource.toString === "function" ? resource : undefined;
+}
+
+function findNotebookCellByUri(uri) {
+  if (!uri) {
+    return undefined;
+  }
+
+  const target = uri.toString();
+  for (const editor of vscode.window.visibleNotebookEditors || []) {
+    const notebook = editor && editor.notebook;
+    const cells = notebookCells(notebook);
+    const cell = cells.find((candidate) => candidate && candidate.document && candidate.document.uri.toString() === target);
+    if (cell) {
+      return attachNotebook(cell, notebook);
+    }
+  }
+  return undefined;
+}
+
+function notebookCellAtSelection(editor) {
+  const notebook = editor && editor.notebook;
+  if (!notebook) {
+    return undefined;
+  }
+
+  const selection = editor.selection || (Array.isArray(editor.selections) ? editor.selections[0] : undefined);
+  const index = selection && Number.isInteger(selection.start) ? selection.start : 0;
+  const cell = typeof notebook.cellAt === "function"
+    ? notebook.cellAt(index)
+    : notebookCells(notebook)[index];
+  return cell ? attachNotebook(cell, notebook) : undefined;
+}
+
+function notebookCells(notebook) {
+  if (!notebook) {
+    return [];
+  }
+  if (typeof notebook.getCells === "function") {
+    return notebook.getCells();
+  }
+  if (Array.isArray(notebook.cells)) {
+    return notebook.cells;
+  }
+  return [];
+}
+
+function attachNotebook(cell, notebook) {
+  if (!cell || cell.notebook) {
+    return cell;
+  }
+  return { ...cell, notebook };
+}
+
+function isGapNotebookCell(cell) {
+  if (!cell || !cell.document || cell.document.languageId !== "gap") {
+    return false;
+  }
+  return !vscode.NotebookCellKind || cell.kind === undefined || cell.kind === vscode.NotebookCellKind.Code;
+}
+
+function notebookCellSourceName(cell) {
+  const notebookPath = cell && cell.notebook && cell.notebook.uri && cell.notebook.uri.fsPath;
+  const notebookName = notebookPath ? path.basename(notebookPath) : "notebook";
+  const index = Number.isInteger(cell.index) ? cell.index + 1 : 1;
+  return `${notebookName} cell ${index}`;
+}
+
+function notebookCellFileBaseName(cell) {
+  return notebookCellSourceName(cell).replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "gap-cell";
+}
+
 function currentFileBreakpoints(uri) {
   return (vscode.debug.breakpoints || [])
     .filter((breakpoint) => breakpoint.enabled !== false)
@@ -1028,8 +1197,11 @@ module.exports = {
   __test: {
     currentFileBreakpoints,
     debugCurrentFile,
+    debugCurrentNotebookCell,
     gapInlineValuesForDocument,
     groupEntries,
+    notebookCellFileBaseName,
+    notebookCellSourceName,
     normalizeRuntimeErrorEvent,
     resolveManualFilePath,
     runtimeErrorDecorationOptions
