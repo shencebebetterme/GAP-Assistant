@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - Added a **GAP Objects** debug view that renders semantic cards for paused GAP locals and globals.
 - Added lazy semantic actions for group generators, conjugacy classes, character table summaries, subgroup classes, elements, permutation operations, matrix operations, record fields, list previews, bases, and algebraic generators.
