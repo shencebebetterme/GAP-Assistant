@@ -11,9 +11,10 @@ class GapSemanticObjectsProvider {
     this.refreshToken = 0;
     this.state = {
       loading: false,
-      unavailable: "Right-click a GAP variable in the Variables view and choose Inspect in GAP Objects.",
+      unavailable: "Start debugging GAP code and pause at a breakpoint to inspect objects.",
       selectedObjectId: "",
       selectedName: "",
+      variables: [],
       objects: [],
       results: {}
     };
@@ -38,6 +39,8 @@ class GapSemanticObjectsProvider {
       await this.refresh();
     } else if (message.type === "action") {
       await this.runAction(message.objectId, message.action);
+    } else if (message.type === "select") {
+      await this.selectObject(message.objectId);
     }
   }
 
@@ -54,15 +57,7 @@ class GapSemanticObjectsProvider {
     const objectId = semanticObjectIdFromVariable(variable);
     const selectedName = semanticObjectNameFromVariable(variable) || objectId;
     if (!objectId) {
-      this.state = {
-        ...this.state,
-        loading: false,
-        error: "Select a bound GAP variable before opening the object inspector.",
-        unavailable: "",
-        objects: [],
-        results: {}
-      };
-      this.postState();
+      await this.focus();
       return;
     }
 
@@ -71,11 +66,29 @@ class GapSemanticObjectsProvider {
       unavailable: "",
       selectedObjectId: objectId,
       selectedName,
+      variables: this.state.variables || [],
       objects: [],
       results: {}
     };
     this.postState();
     await this.focus();
+  }
+
+  async selectObject(objectId) {
+    objectId = String(objectId || "").trim();
+    if (!objectId) {
+      return;
+    }
+    const variable = (this.state.variables || []).find((candidate) => candidate.objectId === objectId);
+    this.state = {
+      ...this.state,
+      selectedObjectId: objectId,
+      selectedName: (variable && variable.name) || objectId,
+      objects: [],
+      results: {}
+    };
+    this.postState();
+    await this.refresh();
   }
 
   async refresh() {
@@ -88,20 +101,7 @@ class GapSemanticObjectsProvider {
         error: "",
         selectedObjectId: this.state.selectedObjectId || "",
         selectedName: this.state.selectedName || "",
-        objects: [],
-        results: {}
-      };
-      this.postState();
-      return;
-    }
-
-    const objectId = this.state.selectedObjectId;
-    if (!objectId) {
-      this.state = {
-        ...this.state,
-        loading: false,
-        unavailable: "Right-click a GAP variable in the Variables view and choose Inspect in GAP Objects.",
-        error: "",
+        variables: [],
         objects: [],
         results: {}
       };
@@ -118,6 +118,28 @@ class GapSemanticObjectsProvider {
     this.postState();
 
     try {
+      const variablesResponse = await session.customRequest("gapSemanticVariables", {});
+      if (token !== this.refreshToken) {
+        return;
+      }
+      const variables = Array.isArray(variablesResponse && variablesResponse.variables) ? variablesResponse.variables : [];
+      const objectId = chooseSelectedObjectId(this.state.selectedObjectId, variables);
+      if (!objectId) {
+        this.state = {
+          ...this.state,
+          loading: false,
+          unavailable: (variablesResponse && variablesResponse.unavailable) || "No bound GAP variables are available at this pause point.",
+          error: "",
+          selectedObjectId: "",
+          selectedName: "",
+          variables,
+          objects: [],
+          results: {}
+        };
+        this.postState();
+        return;
+      }
+
       const response = await session.customRequest("gapSemanticObjects", {
         objectId
       });
@@ -125,10 +147,14 @@ class GapSemanticObjectsProvider {
         return;
       }
       const objects = Array.isArray(response && response.objects) ? response.objects : [];
+      const selectedVariable = variables.find((variable) => variable.objectId === objectId);
       this.state = {
         ...this.state,
         loading: false,
         unavailable: (response && response.unavailable) || (objects.length === 0 ? `The selected GAP variable ${objectId} is not available at this pause point.` : ""),
+        selectedObjectId: objectId,
+        selectedName: (selectedVariable && selectedVariable.name) || objectId,
+        variables,
         objects,
         results: this.retainActionResults(objects)
       };
@@ -142,6 +168,7 @@ class GapSemanticObjectsProvider {
         loading: false,
         unavailable: "",
         error: error && error.message ? error.message : "Could not inspect GAP objects.",
+        variables: this.state.variables || [],
         objects: [],
         results: {}
       };
@@ -291,6 +318,21 @@ function actionResultKey(objectId, action) {
   return `${objectId}::${action}`;
 }
 
+function chooseSelectedObjectId(currentObjectId, variables) {
+  const available = Array.isArray(variables) ? variables.filter((variable) => variable && variable.objectId) : [];
+  if (currentObjectId && available.some((variable) => variable.objectId === currentObjectId)) {
+    return currentObjectId;
+  }
+
+  const groupLike = available.find((variable) => /\b(?:Group|SymmetricGroup|AlternatingGroup|PermGroup)\b/.test(String(variable.value || "")));
+  if (groupLike) {
+    return groupLike.objectId;
+  }
+
+  const nonFunction = available.find((variable) => !/^function\b/.test(String(variable.value || "").trim()));
+  return nonFunction ? nonFunction.objectId : (available[0] && available[0].objectId) || "";
+}
+
 function semanticObjectIdFromVariable(variable) {
   if (!variable || typeof variable !== "object") {
     return "";
@@ -413,6 +455,28 @@ function semanticObjectsHtml() {
       gap: 6px;
       padding: 0 10px 10px;
     }
+    .variable-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin: 0 0 10px;
+    }
+    .variable-button {
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      padding: 2px 7px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-input-background);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .variable-button.active {
+      color: var(--vscode-list-activeSelectionForeground);
+      background: var(--vscode-list-activeSelectionBackground);
+      border-color: var(--vscode-focusBorder);
+    }
     .selected {
       color: var(--vscode-descriptionForeground);
       font-size: 11px;
@@ -486,6 +550,7 @@ function semanticObjectsHtml() {
       if (state.unavailable) {
         appendMessage(state.unavailable);
       }
+      appendVariableStrip(state);
       const objects = Array.isArray(state.objects) ? state.objects : [];
       for (const object of objects) {
         root.appendChild(cardForObject(object, state.results || {}));
@@ -499,6 +564,28 @@ function semanticObjectsHtml() {
       div.className = className ? "message " + className : "message";
       div.textContent = text;
       root.appendChild(div);
+    }
+    function appendVariableStrip(state) {
+      const variables = Array.isArray(state.variables) ? state.variables : [];
+      if (variables.length === 0) {
+        return;
+      }
+      const strip = document.createElement("div");
+      strip.className = "variable-strip";
+      for (const variable of variables) {
+        const button = document.createElement("button");
+        button.className = variable.objectId === state.selectedObjectId ? "variable-button active" : "variable-button";
+        button.title = (variable.scope || "variable") + " " + variable.name + " = " + (variable.value || "");
+        button.textContent = variable.name || variable.objectId;
+        button.addEventListener("click", () => {
+          vscode.postMessage({
+            type: "select",
+            objectId: variable.objectId
+          });
+        });
+        strip.appendChild(button);
+      }
+      root.appendChild(strip);
     }
     function cardForObject(object, results) {
       const card = document.createElement("section");
@@ -619,5 +706,6 @@ module.exports = {
   GapSemanticObjectsProvider,
   VIEW_ID,
   actionResultKey,
+  chooseSelectedObjectId,
   registerSemanticObjectsSupport
 };

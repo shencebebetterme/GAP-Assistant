@@ -113,8 +113,26 @@ Module._load = function patchedLoad(request, parent, isMain) {
 
 try {
   const extension = require("../src/extension");
+  const semanticObjects = require("../src/semanticObjects");
   assert.deepStrictEqual(extension.__test.groupEntries(undefined), [], "undocumented inferred symbols should not crash hover grouping");
   assert.deepStrictEqual(extension.__test.groupEntries([]), [], "empty documentation entries should group to an empty list");
+  assert.strictEqual(
+    semanticObjects.chooseSelectedObjectId("", [
+      { objectId: "es", value: "[ 2, 3 ]" },
+      { objectId: "G", value: "SymmetricGroup( [ 1 .. 3 ] )" },
+      { objectId: "mySum", value: "function (a, b) ... end" }
+    ]),
+    "G",
+    "GAP Objects should prefer group-like variables when auto-selecting an object card"
+  );
+  assert.strictEqual(
+    semanticObjects.chooseSelectedObjectId("es", [
+      { objectId: "es", value: "[ 2, 3 ]" },
+      { objectId: "G", value: "SymmetricGroup( [ 1 .. 3 ] )" }
+    ]),
+    "es",
+    "GAP Objects should keep the existing selected object when it is still available"
+  );
 
   const config = {
     get(key, defaultValue) {

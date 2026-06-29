@@ -248,6 +248,16 @@ async function main() {
   const localsReference = scopeReference(scopes, "Locals");
   const globalsReference = scopeReference(scopes, "Globals");
 
+  const semanticVariablesSeq = send("gapSemanticVariables", {
+    frameId: 1
+  });
+  const semanticVariables = await waitForResponse("gapSemanticVariables", semanticVariablesSeq);
+  assert.strictEqual(semanticVariables.success, true, "semantic variable list request should succeed while GAP is paused");
+  assert(
+    semanticVariables.body.variables.some((variable) => variable.name === "G" && variable.scope === "global"),
+    "semantic variable list should include captured global object names without building every object card"
+  );
+
   const semanticSeq = send("gapSemanticObjects", {
     frameId: 1
   });

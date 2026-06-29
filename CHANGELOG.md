@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3
+
+- Fixed **GAP Objects** so opening the view no longer shows a red selection error.
+- Added automatic selected-object fallback and one-click variable buttons inside **GAP Objects** while keeping the panel focused on one object card.
+
 ## 0.5.2
 
 - Changed **GAP Objects** to inspect one selected debug variable at a time through the Variables view context menu.

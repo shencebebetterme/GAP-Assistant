@@ -153,6 +153,10 @@ class GapDebugAdapter {
         await this.gapSemanticObjects(request);
         return;
 
+      case "gapSemanticVariables":
+        this.gapSemanticVariables(request);
+        return;
+
       case "gapSemanticAction":
         await this.gapSemanticAction(request);
         return;
@@ -661,6 +665,26 @@ class GapDebugAdapter {
     } catch (error) {
       this.sendResponse(request, undefined, false, error.message);
     }
+  }
+
+  gapSemanticVariables(request) {
+    if (!this.paused || !this.runtime) {
+      this.sendResponse(request, {
+        variables: [],
+        unavailable: this.runtime ? "GAP is running." : "No GAP runtime is active."
+      });
+      return;
+    }
+
+    const variables = [...this.currentVariables.values()]
+      .filter((variable) => variable.bound)
+      .map((variable) => ({
+        objectId: variable.name,
+        name: variable.name,
+        value: runtimeVariableValue(variable),
+        scope: variable.scope || "local"
+      }));
+    this.sendResponse(request, { variables });
   }
 
   async gapSemanticAction(request) {
