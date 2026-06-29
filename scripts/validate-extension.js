@@ -69,10 +69,17 @@ function main() {
     if (!commands.includes("gapReference.debugCurrentNotebookCell")) {
       failures.push("package.json must contribute the GAP debug current notebook cell command");
     }
+    if (!commands.includes("gapReference.openSemanticObjects")) {
+      failures.push("package.json must contribute the GAP object inspector command");
+    }
+    validateSemanticObjectView(packageJson.contributes.views, failures);
     validateNotebookDebugMenus(packageJson.contributes.menus, failures);
     const activationEvents = Array.isArray(packageJson.activationEvents) ? packageJson.activationEvents : [];
     if (!activationEvents.includes("onDebugResolve:gap")) {
       failures.push("package.json must activate before resolving GAP debug configurations");
+    }
+    if (!activationEvents.includes("onView:gapSemanticObjects")) {
+      failures.push("package.json must activate when the GAP Objects view is opened");
     }
     const gapDebugger = debuggers.find((debuggerContribution) => debuggerContribution.type === "gap");
     const launchProperties = gapDebugger &&
@@ -140,6 +147,18 @@ function main() {
   console.log(`Validated GAP extension files.`);
   console.log(`Documentation names: ${docs.names.length}`);
   console.log(`Reference entries: ${Object.values(docs.entries).reduce((sum, entries) => sum + entries.length, 0)}`);
+}
+
+function validateSemanticObjectView(views, failures) {
+  const debugViews = views && Array.isArray(views.debug) ? views.debug : [];
+  const objectView = debugViews.find((view) => view && view.id === "gapSemanticObjects");
+  if (!objectView) {
+    failures.push("package.json must contribute the GAP Objects debug view");
+    return;
+  }
+  if (objectView.type !== "webview") {
+    failures.push("GAP Objects view must declare type webview so VS Code uses the webview provider");
+  }
 }
 
 function validateNotebookDebugMenus(menus, failures) {

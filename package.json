@@ -2,7 +2,7 @@
   "name": "gap-assist",
   "displayName": "GAP Assist",
   "description": "Language intelligence, reference hovers, static analysis, and debugging for GAP.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "shencebebetterme",
   "license": "GPL-2.0-or-later",
   "icon": "assets/icon.png",
@@ -156,6 +156,7 @@
       "debug": [
         {
           "id": "gapSemanticObjects",
+          "type": "webview",
           "name": "GAP Objects"
         }
       ]

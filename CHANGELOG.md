@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Fixed the **GAP Objects** view contribution so VS Code loads it as a webview instead of a tree view.
+
 ## 0.5.0
 
 - Added a **GAP Objects** debug view that renders semantic cards for paused GAP locals and globals.
