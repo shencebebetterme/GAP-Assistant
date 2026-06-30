@@ -4,6 +4,7 @@ const assert = require("assert");
 const Module = require("module");
 
 const visibleNotebookEditors = [];
+const semanticTokenBuilds = [];
 const originalLoad = Module._load;
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === "vscode") {
@@ -16,8 +17,17 @@ Module._load = function patchedLoad(request, parent, isMain) {
       },
       SemanticTokensLegend: class SemanticTokensLegend {},
       SemanticTokensBuilder: class SemanticTokensBuilder {
+        constructor() {
+          this.tokens = [];
+        }
+
+        push(line, character, length, tokenType, tokenModifiers) {
+          this.tokens.push({ line, character, length, tokenType, tokenModifiers });
+        }
+
         build() {
-          return {};
+          semanticTokenBuilds.push(this.tokens);
+          return { tokens: this.tokens };
         }
       },
       MarkdownString: class MarkdownString {
@@ -114,6 +124,11 @@ Module._load = function patchedLoad(request, parent, isMain) {
 try {
   const extension = require("../src/extension");
   const semanticObjects = require("../src/semanticObjects");
+  const { GapAnalyzer } = require("../server/analyzer");
+  const { loadDeclarations, loadDocumentation } = require("../src/docs");
+  const root = require("path").resolve(__dirname, "..");
+  const docs = loadDocumentation(root);
+  const declarations = loadDeclarations(root);
   assert.deepStrictEqual(extension.__test.groupEntries(undefined), [], "undocumented inferred symbols should not crash hover grouping");
   assert.deepStrictEqual(extension.__test.groupEntries([]), [], "empty documentation entries should group to an empty list");
   assert.strictEqual(
@@ -276,6 +291,28 @@ after := 0;
   assert(analysisContext.text.includes("helper := function"), "notebook analysis should include previous GAP cells");
   assert(analysisContext.text.endsWith(secondCellDocument.getText()), "notebook analysis should end with the active cell text");
   assert.strictEqual(analysisContext.lineOffset, 5, "notebook analysis should report the active cell line offset");
+
+  const semanticDocument = testDocument([
+    "Digraph([1]);",
+    "LoadPackage(\"digraphs\");",
+    "Digraph([1]);",
+    "SymmetricGroup(3);",
+    "mySum := function(a, b)",
+    "  return a + b;",
+    "end;",
+    "mySum(1, 2);",
+    ""
+  ].join("\n"));
+  const semanticProvider = new extension.__test.GapSemanticTokensProvider(
+    docs,
+    declarations,
+    new GapAnalyzer(docs, declarations)
+  );
+  const semanticTokens = semanticProvider.provideDocumentSemanticTokens(semanticDocument).tokens;
+  assert(!semanticTokens.some((token) => token.line === 0 && token.character === 0), "unloaded package functions should not receive semantic tokens");
+  assert(semanticTokens.some((token) => token.line === 2 && token.character === 0), "loaded package functions should receive semantic tokens after LoadPackage");
+  assert(semanticTokens.some((token) => token.line === 3 && token.character === 0), "core GAP functions should still receive semantic tokens");
+  assert(semanticTokens.some((token) => token.line === 7 && token.character === 0), "user-defined functions should receive semantic tokens");
 } finally {
   Module._load = originalLoad;
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4
+
+- Added static diagnostics for undefined variables and functions.
+- Treated package-manual symbols as undefined until the corresponding `LoadPackage(...)` call is in scope.
+- Restricted semantic highlighting for documented package symbols to loaded package contexts.
+
 ## 0.5.3
 
 - Fixed **GAP Objects** so opening the view no longer shows a red selection error.

@@ -8,7 +8,7 @@ const vscode = require("vscode");
 const { getEntries, isIdentifier, loadDeclarations, loadDocumentation } = require("./docs");
 const { GapLanguageServerClient } = require("./lspClient");
 const { registerSemanticObjectsSupport } = require("./semanticObjects");
-const { GapAnalyzer, formatInferenceMarkdown } = require("../server/analyzer");
+const { GapAnalyzer, formatInferenceMarkdown, isDocumentedNameAvailable } = require("../server/analyzer");
 const { createFileIncludeResolver } = require("../server/includes");
 const { parseGapSource } = require("../server/parser");
 
@@ -60,7 +60,7 @@ function activate(context) {
     registerSemanticObjectsSupport(context, debugOutputChannel),
     vscode.languages.registerDocumentSemanticTokensProvider(
       GAP_SELECTOR,
-      new GapSemanticTokensProvider(docs),
+      new GapSemanticTokensProvider(docs, declarations, analyzer),
       SEMANTIC_LEGEND
     ),
     vscode.workspace.onDidOpenTextDocument((document) => handleGapDocumentChanged(document, analyzer, diagnosticCollection, hoverProvider)),
@@ -614,8 +614,11 @@ function nestedStatements(statement) {
 }
 
 class GapSemanticTokensProvider {
-  constructor(docs) {
-    this.names = new Set(docs.names.filter(isIdentifier));
+  constructor(docs, declarations, analyzer) {
+    this.docs = docs || { entries: {}, names: [] };
+    this.declarations = declarations || { declarations: {}, names: [] };
+    this.analyzer = analyzer;
+    this.names = new Set(this.docs.names.filter(isIdentifier));
   }
 
   provideDocumentSemanticTokens(document) {
@@ -627,6 +630,11 @@ class GapSemanticTokensProvider {
       return builder.build();
     }
 
+    const context = documentAnalysisContext(document);
+    const analysis = this.analyzer && typeof this.analyzer.analyze === "function"
+      ? this.analyzer.analyze(context.text, document.uri.toString())
+      : { loadedPackages: new Set(), loadedPackageEvents: [] };
+
     for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber += 1) {
       const line = document.lineAt(lineNumber).text;
       const searchable = maskNonCode(line);
@@ -635,7 +643,8 @@ class GapSemanticTokensProvider {
 
       while ((match = regex.exec(searchable)) !== null) {
         const name = match[0];
-        if (this.names.has(name)) {
+        const contextOffset = offsetAtDocumentPosition(context.text, lineNumber + context.lineOffset, match.index);
+        if (this.shouldHighlightIdentifier(name, analysis, lineNumber + context.lineOffset, match.index, contextOffset)) {
           builder.push(lineNumber, match.index, name.length, 0, 0);
         }
       }
@@ -643,6 +652,32 @@ class GapSemanticTokensProvider {
 
     return builder.build();
   }
+
+  shouldHighlightIdentifier(name, analysis, line, character, offset) {
+    const data = {
+      docs: this.docs,
+      declarations: this.declarations,
+      loadedPackages: analysis.loadedPackages,
+      loadedPackageEvents: analysis.loadedPackageEvents
+    };
+    if (this.names.has(name) && isDocumentedNameAvailable(name, data, offset)) {
+      return true;
+    }
+
+    const hover = analysis && typeof analysis.hoverAt === "function" ? analysis.hoverAt(line, character) : undefined;
+    return Boolean(hover && symbolIsFunctionLike(hover.symbol));
+  }
+}
+
+function symbolIsFunctionLike(symbol) {
+  const type = symbol && symbol.type;
+  if (symbol && symbol.returnType) {
+    return true;
+  }
+  if (type && type.returnType) {
+    return true;
+  }
+  return Array.isArray(type && type.filters) && type.filters.includes("IsFunction");
 }
 
 function maskNonCode(line) {
@@ -905,6 +940,18 @@ class GapDebugAdapterDescriptorFactory {
       }
     });
   }
+}
+
+function offsetAtDocumentPosition(text, line, character) {
+  let currentLine = 0;
+  let lineStart = 0;
+  for (let index = 0; index < text.length && currentLine < line; index += 1) {
+    if (text[index] === "\n") {
+      currentLine += 1;
+      lineStart = index + 1;
+    }
+  }
+  return lineStart + character;
 }
 
 class GapDebugConfigurationProvider {
@@ -1290,6 +1337,7 @@ module.exports = {
     debugCurrentFile,
     debugCurrentNotebookCell,
     documentAnalysisContext,
+    GapSemanticTokensProvider,
     gapInlineValuesForDocument,
     groupEntries,
     notebookCellFileBaseName,

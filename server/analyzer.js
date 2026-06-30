@@ -6,6 +6,37 @@ const { findReadIncludes } = require("./includes");
 
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TERMINATING_CALLS = new Set(["ErrorNoReturn", "TryNextMethod"]);
+const GAP_KEYWORDS = new Set([
+  "and",
+  "atomic",
+  "break",
+  "continue",
+  "do",
+  "elif",
+  "else",
+  "end",
+  "fail",
+  "false",
+  "fi",
+  "for",
+  "function",
+  "if",
+  "in",
+  "local",
+  "mod",
+  "not",
+  "od",
+  "or",
+  "readonly",
+  "readwrite",
+  "rec",
+  "repeat",
+  "return",
+  "then",
+  "true",
+  "until",
+  "while"
+]);
 
 const HARD_CODED_CALLS = {
   AlternatingGroup: callType("alternating permutation group", ["IsObject", "IsCollection", "IsMagma", "IsGroup", "IsPermGroup", "IsFinite"], "constructor"),
@@ -57,13 +88,18 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
   const ast = parseGapSource(text);
   const globalScope = createScope("global", 0, text.length, undefined);
   globalScope.lineStarts = lineStarts;
-  seedGlobalScopeFromIncludes(globalScope, ast, docs, uri, declarations, options);
+  const loadedPackageEvents = [
+    ...seedGlobalScopeFromIncludes(globalScope, ast, docs, uri, declarations, options),
+    ...loadPackageEvents(text, masked)
+  ].sort((left, right) => left.offset - right.offset);
+  const loadedPackages = new Set(loadedPackageEvents.map((event) => event.name));
   const diagnostics = [];
   const functions = [];
   const scopes = [globalScope];
-  const data = { docs, declarations, diagnostics, lineStarts, scopes };
+  const data = { docs, declarations, diagnostics, lineStarts, scopes, loadedPackages, loadedPackageEvents };
   analyzeStatements(ast.statements, globalScope, data, functions, text, masked, lineStarts, scopes);
   refineFunctionParametersFromCallSites(text, masked, functions, globalScope, data);
+  reportUndefinedSymbolDiagnostics(text, masked, scopes, data);
 
   const document = {
     uri,
@@ -72,6 +108,8 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
     lineStarts,
     scopes,
     functions,
+    loadedPackages,
+    loadedPackageEvents,
     diagnostics,
     hoverAt(line, character) {
       const offset = offsetAt(lineStarts, line, character);
@@ -91,7 +129,7 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
         };
       }
 
-      const documented = documentedCallableInfo(word.text, data);
+      const documented = documentedCallableInfo(word.text, data, word.start);
       if (documented) {
         return {
           kind: "documented",
@@ -109,8 +147,9 @@ function analyzeGapText(text, docs, uri = "", declarations = { declarations: {},
 }
 
 function seedGlobalScopeFromIncludes(globalScope, ast, docs, uri, declarations, options) {
+  const loadedPackageEvents = [];
   if (!options || typeof options.resolveInclude !== "function") {
-    return;
+    return loadedPackageEvents;
   }
 
   const includeStack = includeStackWithUri(options.includeStack, uri);
@@ -147,7 +186,17 @@ function seedGlobalScopeFromIncludes(globalScope, ast, docs, uri, declarations, 
     });
     const includedGlobalScope = includedAnalysis && includedAnalysis.scopes && includedAnalysis.scopes[0];
     mergeIncludedGlobalSymbols(globalScope, includedGlobalScope, resolvedUri);
+    for (const packageName of includedAnalysis.loadedPackages || []) {
+      loadedPackageEvents.push({
+        name: packageName,
+        rawName: packageName,
+        offset: reference.start,
+        source: resolvedUri
+      });
+    }
   }
+
+  return loadedPackageEvents;
 }
 
 function includeStackWithUri(stack, uri) {
@@ -1110,7 +1159,7 @@ function parseAssignments(text, masked, scope, data, excludedRanges = [], baseOf
 
 function refineSymbolsFromCallArgumentFilters(text, masked, scope, data, baseOffset = 0) {
   for (const call of findCalls(text, masked, baseOffset)) {
-    const callable = documentedCallableInfo(call.name, data);
+    const callable = documentedCallableInfo(call.name, data, call.start);
     const parameterTypes = callParameterTypesForArgs(callable, call.args, scope, data, baseOffset);
     if (!parameterTypes || parameterTypes.length === 0) {
       continue;
@@ -1330,7 +1379,7 @@ function inferExpression(expression, scope, data, expressionOffset = 0) {
   }
 
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(expr)) {
-    const documented = documentedCallableInfo(expr, data);
+    const documented = documentedCallableInfo(expr, data, expressionOffset);
     if (documented) {
       return documented.type;
     }
@@ -2086,6 +2135,87 @@ function reportConditionDiagnostic(kind, condition, type, data) {
   );
 }
 
+function reportUndefinedSymbolDiagnostics(text, masked, scopes, data) {
+  const reportedOffsets = new Set();
+  const regex = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
+  let match;
+
+  while ((match = regex.exec(masked)) !== null) {
+    const name = match[0];
+    const offset = match.index;
+    if (reportedOffsets.has(offset) || shouldIgnoreUndefinedIdentifier(masked, offset, name)) {
+      continue;
+    }
+
+    const scope = innermostScopeAt(scopes, offset);
+    if (lookupSymbol(scope, name) || HARD_CODED_CALLS[name] || documentedCallableInfo(name, data, offset)) {
+      continue;
+    }
+
+    const packageInfo = unavailablePackageSymbolInfo(name, data, offset);
+    const isCall = identifierLooksLikeCall(masked, offset + name.length);
+    const message = packageInfo
+      ? unloadedPackageMessage(name, packageInfo, isCall)
+      : undefinedSymbolMessage(name, isCall);
+    reportDiagnostic(data, offset, name.length, message, {
+      code: packageInfo ? "undefined-package-symbol" : "undefined-symbol",
+      severity: 2
+    });
+    reportedOffsets.add(offset);
+  }
+}
+
+function shouldIgnoreUndefinedIdentifier(masked, offset, name) {
+  if (GAP_KEYWORDS.has(name)) {
+    return true;
+  }
+  if (previousNonWhitespace(masked, offset) === ".") {
+    return true;
+  }
+  if (identifierIsAssignmentTarget(masked, offset, name)) {
+    return true;
+  }
+  return false;
+}
+
+function identifierIsAssignmentTarget(masked, offset, name) {
+  const next = nextNonWhitespaceIndex(masked, offset + name.length);
+  return masked.slice(next, next + 2) === ":=";
+}
+
+function identifierLooksLikeCall(masked, endOffset) {
+  return masked[nextNonWhitespaceIndex(masked, endOffset)] === "(";
+}
+
+function undefinedSymbolMessage(name, isCall) {
+  return isCall
+    ? `Function ${name} is not defined in the current GAP context.`
+    : `Variable ${name} is not defined in the current GAP context.`;
+}
+
+function unloadedPackageMessage(name, packageInfo, isCall) {
+  const packages = packageInfo.packages.map((packageName) => `LoadPackage("${packageName}")`).join(" or ");
+  const noun = isCall ? "Function" : "Symbol";
+  return `${noun} ${name} is provided by an installed GAP package, but that package is not loaded before this use. Add ${packages} before using it.`;
+}
+
+function previousNonWhitespace(text, offset) {
+  for (let index = offset - 1; index >= 0; index -= 1) {
+    if (!/\s/.test(text[index])) {
+      return text[index];
+    }
+  }
+  return "";
+}
+
+function nextNonWhitespaceIndex(text, offset) {
+  let index = Math.max(0, offset);
+  while (index < text.length && /\s/.test(text[index])) {
+    index += 1;
+  }
+  return index;
+}
+
 function inferCall(name, args, scope, data, expressionOffset = 0, argumentSpans = []) {
   const local = lookupSymbol(scope, name);
   if (local && local.returnType) {
@@ -2093,7 +2223,7 @@ function inferCall(name, args, scope, data, expressionOffset = 0, argumentSpans 
     return local.returnType;
   }
 
-  const documented = documentedCallableInfo(name, data);
+  const documented = documentedCallableInfo(name, data, expressionOffset);
   const hardCoded = HARD_CODED_CALLS[name];
   if (documented) {
     reportCallArgumentDiagnostics(name, args, scope, data, expressionOffset, argumentSpans, documented);
@@ -2704,11 +2834,11 @@ function addCallContext(type, name, args, scope) {
   return enriched;
 }
 
-function documentedCallableInfo(name, data) {
+function documentedCallableInfo(name, data, offset) {
   const docs = data.docs || data;
-  const entries = docs && docs.entries && docs.entries[name];
   const declarations = data.declarations || { declarations: {}, names: [] };
   const declarationInfo = declarationCallableInfo(name, declarations);
+  const entries = availableDocumentationEntries(name, data, offset);
   if (!entries || entries.length === 0) {
     return declarationInfo;
   }
@@ -2743,6 +2873,84 @@ function documentedCallableInfo(name, data) {
     source: "GAP reference manual",
     documentation: returnSummary(entry)
   };
+}
+
+function availableDocumentationEntries(name, data, offset) {
+  const docs = data.docs || data;
+  const entries = docs && docs.entries && docs.entries[name];
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [];
+  }
+  return entries.filter((entry) => documentationEntryIsAvailable(entry, data, offset));
+}
+
+function documentationEntryIsAvailable(entry, data, offset) {
+  const packageName = packageNameForDocumentationEntry(entry);
+  if (!packageName) {
+    return true;
+  }
+  return packageIsLoaded(data, packageName, offset);
+}
+
+function packageNameForDocumentationEntry(entry) {
+  if (!entry) {
+    return "";
+  }
+  if (entry.manualType === "package" || entry.packageName) {
+    return normalizePackageName(entry.packageName || "");
+  }
+  const manualId = String(entry.manualId || "");
+  if (manualId.startsWith("pkg:")) {
+    return normalizePackageName(manualId.slice(4));
+  }
+  return "";
+}
+
+function packageDisplayNameForDocumentationEntry(entry) {
+  if (!entry) {
+    return "";
+  }
+  if (entry.packageName) {
+    return String(entry.packageName);
+  }
+  const manualId = String(entry.manualId || "");
+  if (manualId.startsWith("pkg:")) {
+    return manualId.slice(4);
+  }
+  return "";
+}
+
+function packageIsLoaded(data, packageName, offset) {
+  const normalized = normalizePackageName(packageName);
+  if (!normalized) {
+    return false;
+  }
+  if (Number.isInteger(offset) && Array.isArray(data.loadedPackageEvents)) {
+    return data.loadedPackageEvents.some((event) => event.name === normalized && event.offset <= offset);
+  }
+  return data.loadedPackages instanceof Set && data.loadedPackages.has(normalized);
+}
+
+function unavailablePackageSymbolInfo(name, data, offset) {
+  const docs = data.docs || data;
+  const entries = docs && docs.entries && docs.entries[name];
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return undefined;
+  }
+  if (availableDocumentationEntries(name, data, offset).length > 0) {
+    return undefined;
+  }
+
+  const packages = sortedUnique(entries
+    .filter((entry) => packageNameForDocumentationEntry(entry))
+    .filter((entry) => !documentationEntryIsAvailable(entry, data, offset))
+    .map(packageDisplayNameForDocumentationEntry)
+    .filter(Boolean));
+  return packages.length > 0 ? { packages } : undefined;
+}
+
+function isDocumentedNameAvailable(name, data, offset) {
+  return availableDocumentationEntries(name, data, offset).length > 0;
 }
 
 function hardCodedReturnType(name) {
@@ -3245,6 +3453,55 @@ function parseCallExpression(expr) {
   };
 }
 
+function loadPackageEvents(text, masked = maskCommentsAndStrings(text)) {
+  const events = [];
+  for (const call of findCalls(text, masked)) {
+    if (call.name !== "LoadPackage" || !Array.isArray(call.args) || call.args.length === 0) {
+      continue;
+    }
+
+    const rawName = gapStringLiteralValue(call.args[0]);
+    const name = normalizePackageName(rawName);
+    if (!name) {
+      continue;
+    }
+
+    events.push({
+      name,
+      rawName,
+      offset: call.start
+    });
+  }
+  return events;
+}
+
+function loadedPackageNames(text, masked = maskCommentsAndStrings(text)) {
+  return new Set(loadPackageEvents(text, masked).map((event) => event.name));
+}
+
+function gapStringLiteralValue(text) {
+  const match = /^"((?:\\.|[^"\\])*)"$/.exec(String(text || "").trim());
+  if (!match) {
+    return "";
+  }
+  return match[1].replace(/\\(.)/g, (_match, char) => {
+    const escapes = {
+      "\"": "\"",
+      "\\": "\\",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      b: "\b",
+      f: "\f"
+    };
+    return escapes[char] || char;
+  });
+}
+
+function normalizePackageName(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
 function findCalls(text, masked, baseOffset = 0) {
   const calls = [];
   const regex = /\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
@@ -3712,5 +3969,7 @@ module.exports = {
   analyzeGapText,
   formatInferenceMarkdown,
   inferExpression,
+  isDocumentedNameAvailable,
+  loadedPackageNames,
   typeInfo
 };

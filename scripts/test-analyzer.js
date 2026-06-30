@@ -130,7 +130,12 @@ assertHoverText(gcdMarkdown, "R:", "optional signature parameters should split t
 assertHoverText(gcdMarkdown, "r1:", "optional signature parameters should keep the first required value parameter separate");
 assert(!gcdMarkdown.includes("R,r1"), "optional signature parameters should not merge comma-separated names");
 
-const hoverDigraph = analyzer.hoverAt("Digraph([1, 2]);", 0, 1);
+const unloadedDigraphAnalysis = analyzer.analyze("Digraph([1, 2]);", "memory://unloaded-digraph.g");
+assert.strictEqual(unloadedDigraphAnalysis.hoverAt(0, 1), undefined, "package symbols should not hover before LoadPackage");
+const unloadedDigraphDiagnostics = unloadedDigraphAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "undefined-package-symbol");
+assert.strictEqual(unloadedDigraphDiagnostics.length, 1, "unloaded package functions should be diagnosed as undefined");
+assert(unloadedDigraphDiagnostics[0].message.includes("LoadPackage(\"digraphs\")"), "package diagnostic should suggest loading the package");
+const hoverDigraph = analyzer.hoverAt("LoadPackage(\"digraphs\");\nDigraph([1, 2]);", 1, 1);
 const digraphMarkdown = formatInferenceMarkdown(hoverDigraph);
 assertHoverText(digraphMarkdown, "filt:", "package signatures should split optional leading parameters");
 assertHoverText(digraphMarkdown, "obj:", "package signatures should keep required parameters separate after optional groups");
@@ -172,7 +177,7 @@ for (const name of ["d", "e", "f"]) {
   assert(symbol && symbol.type.filters.includes("IsInt"), `${name} should infer an integer Gcd result`);
 }
 
-const hoverPermutable = analyzer.hoverAt("ArePermutableSubgroups(G, U, V);", 0, 2);
+const hoverPermutable = analyzer.hoverAt("LoadPackage(\"permut\");\nArePermutableSubgroups(G, U, V);", 1, 2);
 assert(hoverPermutable.symbol.returnType.filters.includes("IsBool"), "functions returning true/false should infer boolean");
 assert(!hoverPermutable.symbol.returnType.filters.includes("IsGroup"), "boolean subgroup predicates should not infer group returns from argument prose");
 
@@ -259,14 +264,20 @@ const hoverIdentityMapping = analyzer.hoverAt("IdentityMapping(D);", 0, 1);
 assert(hoverIdentityMapping.symbol.returnType.filters.includes("IsGeneralMapping"), "IdentityMapping hover should infer a mapping return");
 assert(!hoverIdentityMapping.symbol.returnType.filters.includes("IsList"), "IdentityMapping should not infer a list return from source/range collections");
 
-const hoverAllPrimes = analyzer.hoverAt("AllPrimes;", 0, 1);
+const hoverAllPrimes = analyzer.hoverAt("LoadPackage(\"crisp\");\nAllPrimes;", 1, 1);
 assert(hoverAllPrimes && !hoverAllPrimes.symbol.returnType, "documented variables should not be modeled as functions");
 assert(hoverAllPrimes.symbol.type.filters.includes("IsList"), "documented set/list variables should infer collection-like values");
 assert(!hoverAllPrimes.symbol.type.filters.includes("IsGroup"), "documented variables should not infer groups from incidental prose");
-const hoverZugadi = analyzer.hoverAt("ZugadiSpinalGroup;", 0, 1);
+const unloadedPackageVariableAnalysis = analyzer.analyze("ZugadiSpinalGroup;", "memory://unloaded-package-variable.g");
+assert.strictEqual(unloadedPackageVariableAnalysis.hoverAt(0, 1), undefined, "package global variables should not hover before LoadPackage");
+assert(
+  unloadedPackageVariableAnalysis.diagnostics.some((diagnostic) => diagnostic.code === "undefined-package-symbol" && diagnostic.message.includes("LoadPackage(\"fr\")")),
+  "package global variables should report the missing package"
+);
+const hoverZugadi = analyzer.hoverAt("LoadPackage(\"fr\");\nZugadiSpinalGroup;", 1, 1);
 assert(hoverZugadi && !hoverZugadi.symbol.returnType, "documented global variables should render as values even when group-like");
 assert(hoverZugadi.symbol.type.filters.includes("IsGroup"), "documented variables described as groups should infer group-like values");
-const hoverBabyAleshin = analyzer.hoverAt("BabyAleshinGroup;", 0, 1);
+const hoverBabyAleshin = analyzer.hoverAt("LoadPackage(\"fr\");\nBabyAleshinGroup;", 1, 1);
 assert(!hoverBabyAleshin.symbol.type.filters.includes("IsList"), "incidental generator counts should not make documented variables list-like");
 
 const hoverString = analyzer.hoverAt('str := "hello";', 0, 1);
@@ -526,6 +537,20 @@ const branchAssigned = unassignedLocalAnalysis.scopes[0].symbols.get("branchAssi
 assert(branchAssigned && branchAssigned.returnType.filters.includes("IsInt"), "locals assigned on every if branch should be assigned after the conditional");
 const branchWithTermination = unassignedLocalAnalysis.scopes[0].symbols.get("branchWithTermination");
 assert(branchWithTermination && branchWithTermination.returnType.filters.includes("IsInt"), "terminating branches should not block definite assignment on reaching paths");
+
+const undefinedSymbolSample = [
+  "known := 1;",
+  "usesMissing := MissingValue + known;",
+  "callMissing := MissingFunction(known);",
+  "usesDefined := known + 1;",
+  ""
+].join("\n");
+const undefinedSymbolAnalysis = analyzer.analyze(undefinedSymbolSample, "memory://undefined-symbols.g");
+const undefinedSymbolDiagnostics = undefinedSymbolAnalysis.diagnostics.filter((diagnostic) => diagnostic.code === "undefined-symbol");
+assert.strictEqual(undefinedSymbolDiagnostics.length, 2, "unknown variables and functions should be diagnosed");
+assert(undefinedSymbolDiagnostics.some((diagnostic) => diagnostic.message.includes("Variable MissingValue")), "undefined variable diagnostic should name the variable");
+assert(undefinedSymbolDiagnostics.some((diagnostic) => diagnostic.message.includes("Function MissingFunction")), "undefined function diagnostic should name the function");
+assert(!undefinedSymbolDiagnostics.some((diagnostic) => diagnostic.message.includes("known")), "defined globals should not be diagnosed as undefined");
 
 const flowSample = [
   "flow := function(obj)",

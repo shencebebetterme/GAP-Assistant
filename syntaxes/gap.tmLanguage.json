@@ -28,9 +28,6 @@
       "include": "#declarations"
     },
     {
-      "include": "#function-calls"
-    },
-    {
       "include": "#operators"
     }
   ],
@@ -118,14 +115,6 @@
         {
           "name": "support.function.declaration.gap",
           "match": "\\b(?:BindGlobal|DeclareAttribute|DeclareCategory|DeclareConstructor|DeclareFilter|DeclareGlobalFunction|DeclareGlobalName|DeclareGlobalVariable|DeclareOperation|DeclareProperty|DeclareRepresentation|DeclareSynonym|DeclareSynonymAttr|InstallGlobalFunction|InstallImmediateMethod|InstallMethod|InstallOtherMethod|InstallTrueMethod|InstallValue|NewAttribute|NewCategory|NewConstructor|NewFilter|NewOperation|NewProperty|NewRepresentation)\\b"
-        }
-      ]
-    },
-    "function-calls": {
-      "patterns": [
-        {
-          "name": "entity.name.function.gap",
-          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
         }
       ]
     },
