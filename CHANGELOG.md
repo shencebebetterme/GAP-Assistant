@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.5
+
+- Added **Go to Definition** support for GAP variables and functions with F12.
+- Resolved definitions in the current file, earlier GAP notebook cells, and functions imported through `Read(...)`.
+
 ## 0.5.4
 
 - Added static diagnostics for undefined variables and functions.

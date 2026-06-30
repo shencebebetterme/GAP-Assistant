@@ -63,6 +63,12 @@ Module._load = function patchedLoad(request, parent, isMain) {
           this.end = end;
         }
       },
+      Location: class Location {
+        constructor(uri, range) {
+          this.uri = uri;
+          this.range = range;
+        }
+      },
       InlineValueVariableLookup: class InlineValueVariableLookup {
         constructor(range, variableName, caseSensitiveLookup) {
           this.range = range;
@@ -91,6 +97,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
         startDebugging: async () => true
       },
       languages: {
+        registerDefinitionProvider: () => ({ dispose() {} }),
         registerDocumentSemanticTokensProvider: () => ({ dispose() {} }),
         registerHoverProvider: () => ({ dispose() {} }),
         registerInlineValuesProvider: () => ({ dispose() {} })
@@ -291,6 +298,37 @@ after := 0;
   assert(analysisContext.text.includes("helper := function"), "notebook analysis should include previous GAP cells");
   assert(analysisContext.text.endsWith(secondCellDocument.getText()), "notebook analysis should end with the active cell text");
   assert.strictEqual(analysisContext.lineOffset, 5, "notebook analysis should report the active cell line offset");
+  assert(Array.isArray(analysisContext.sourceMap), "notebook analysis should include source mapping for definitions");
+
+  const definitionProvider = new extension.__test.GapDefinitionProvider(new GapAnalyzer(docs, declarations));
+  const sameFileDefinitionDocument = testDocument([
+    "mySum := function(a, b)",
+    "  return a + b;",
+    "end;",
+    "z := mySum(1, 2);",
+    ""
+  ].join("\n"));
+  const sameFileDefinition = definitionProvider.provideDefinition(sameFileDefinitionDocument, { line: 3, character: 6 });
+  assert.strictEqual(sameFileDefinition.uri, sameFileDefinitionDocument.uri, "same-file definitions should target the current document");
+  assert.strictEqual(sameFileDefinition.range.start.line, 0, "function definition should point to its assignment line");
+  assert.strictEqual(sameFileDefinition.range.start.character, 0, "function definition should point to the function name");
+
+  const notebookDefinition = definitionProvider.provideDefinition(secondCellDocument, { line: 0, character: 6 });
+  assert.strictEqual(notebookDefinition.uri, firstCellDocument.uri, "notebook definitions should jump to previous GAP cells");
+  assert.strictEqual(notebookDefinition.range.start.line, 1, "notebook definition should preserve the previous cell line");
+  assert.strictEqual(notebookDefinition.range.start.character, 0, "notebook definition should point to the function name");
+
+  const importedDefinition = extension.__test.definitionLocationForHover({
+    kind: "symbol",
+    symbol: {
+      name: "NeedsGroup",
+      importedFrom: "file:///tmp/y.g",
+      range: { line: 2, character: 4 }
+    }
+  }, { sourceMap: [], lineOffset: 0 }, sameFileDefinitionDocument);
+  assert.strictEqual(importedDefinition.uri.toString(), "file:///tmp/y.g", "imported definitions should target their source URI");
+  assert.strictEqual(importedDefinition.range.start.line, 2, "imported definitions should keep source line");
+  assert.strictEqual(importedDefinition.range.start.character, 4, "imported definitions should keep source character");
 
   const semanticDocument = testDocument([
     "Digraph([1]);",

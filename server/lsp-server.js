@@ -62,7 +62,7 @@ function handleMessage(message) {
       },
       serverInfo: {
         name: "gap-assist-language-server",
-        version: "0.5.4"
+        version: "0.5.5"
       }
     });
     return;

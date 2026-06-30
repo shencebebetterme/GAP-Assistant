@@ -55,6 +55,7 @@ function activate(context) {
     ),
     vscode.debug.registerDebugConfigurationProvider("gap", new GapDebugConfigurationProvider()),
     vscode.languages.registerHoverProvider(GAP_SELECTOR, hoverProvider),
+    vscode.languages.registerDefinitionProvider(GAP_SELECTOR, new GapDefinitionProvider(analyzer)),
     registerInlineValuesProvider(),
     registerRuntimeErrorDecorationSupport(),
     registerSemanticObjectsSupport(context, debugOutputChannel),
@@ -159,7 +160,8 @@ function documentAnalysisContext(document) {
   if (!document || document.languageId !== "gap") {
     return {
       text: document ? document.getText() : "",
-      lineOffset: 0
+      lineOffset: 0,
+      sourceMap: document ? sourceMapForDocument(document, 0) : []
     };
   }
 
@@ -167,23 +169,64 @@ function documentAnalysisContext(document) {
   if (!cell) {
     return {
       text: document.getText(),
-      lineOffset: 0
+      lineOffset: 0,
+      sourceMap: sourceMapForDocument(document, 0)
     };
   }
 
-  const prefix = previousGapNotebookCellsText(cell);
-  if (!prefix) {
+  const previousCells = previousGapNotebookCells(cell);
+  const parts = [];
+  const sourceMap = [];
+  let currentLine = 0;
+
+  for (const previousCell of previousCells) {
+    const previousText = previousCell.document.getText().trimEnd();
+    if (!previousText.trim()) {
+      continue;
+    }
+    if (parts.length > 0) {
+      parts.push("\n\n");
+      currentLine += 2;
+    }
+    sourceMap.push({
+      startLine: currentLine,
+      endLine: currentLine + newlineCount(previousText),
+      document: previousCell.document
+    });
+    parts.push(previousText);
+    currentLine += newlineCount(previousText);
+  }
+
+  if (parts.length === 0) {
     return {
       text: document.getText(),
-      lineOffset: 0
+      lineOffset: 0,
+      sourceMap: sourceMapForDocument(document, 0)
     };
   }
 
-  const prefixWithSeparator = `${prefix}\n\n`;
+  parts.push("\n\n");
+  currentLine += 2;
+  const lineOffset = currentLine;
+  sourceMap.push({
+    startLine: lineOffset,
+    endLine: lineOffset + newlineCount(document.getText()),
+    document
+  });
+  parts.push(document.getText());
   return {
-    text: `${prefixWithSeparator}${document.getText()}`,
-    lineOffset: newlineCount(prefixWithSeparator)
+    text: parts.join(""),
+    lineOffset,
+    sourceMap
   };
+}
+
+function sourceMapForDocument(document, startLine) {
+  return [{
+    startLine,
+    endLine: startLine + newlineCount(document.getText()),
+    document
+  }];
 }
 
 function adjustDiagnosticLineOffset(diagnostic, lineOffset) {
@@ -451,6 +494,70 @@ class GapHoverProvider {
   clearAnalysisCache() {
     this.analysisCache.clear();
   }
+}
+
+class GapDefinitionProvider {
+  constructor(analyzer) {
+    this.analyzer = analyzer;
+  }
+
+  provideDefinition(document, position) {
+    if (!document || document.languageId !== "gap") {
+      return undefined;
+    }
+
+    const context = documentAnalysisContext(document);
+    const analysis = this.analyzer.analyze(context.text, document.uri.toString());
+    const hover = analysis.hoverAt(position.line + (context.lineOffset || 0), position.character);
+    return definitionLocationForHover(hover, context, document);
+  }
+}
+
+function definitionLocationForHover(hover, context, fallbackDocument) {
+  const symbol = hover && hover.kind === "symbol" ? hover.symbol : undefined;
+  if (!symbol || !symbol.range) {
+    return undefined;
+  }
+
+  const nameLength = Math.max(1, String(symbol.name || "").length);
+  if (symbol.importedFrom) {
+    return new vscode.Location(
+      uriFromAnalyzerSource(symbol.importedFrom),
+      rangeFromAnalyzerPosition(symbol.range, nameLength)
+    );
+  }
+
+  const segment = sourceMapSegmentForLine(context && context.sourceMap, symbol.range.line);
+  const document = segment && segment.document ? segment.document : fallbackDocument;
+  const startLine = segment ? symbol.range.line - segment.startLine : symbol.range.line - ((context && context.lineOffset) || 0);
+  return new vscode.Location(
+    document.uri,
+    rangeFromAnalyzerPosition({ line: Math.max(0, startLine), character: symbol.range.character }, nameLength)
+  );
+}
+
+function sourceMapSegmentForLine(sourceMap, line) {
+  if (!Array.isArray(sourceMap)) {
+    return undefined;
+  }
+  return sourceMap.find((segment) => line >= segment.startLine && line <= segment.endLine);
+}
+
+function uriFromAnalyzerSource(source) {
+  const text = String(source || "");
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(text)) {
+    return vscode.Uri.parse(text);
+  }
+  return vscode.Uri.file(text);
+}
+
+function rangeFromAnalyzerPosition(position, length) {
+  const line = Math.max(0, position.line || 0);
+  const character = Math.max(0, position.character || 0);
+  return new vscode.Range(
+    new vscode.Position(line, character),
+    new vscode.Position(line, character + Math.max(1, length))
+  );
 }
 
 class GapInlineValuesProvider {
@@ -1336,7 +1443,9 @@ module.exports = {
     currentFileBreakpoints,
     debugCurrentFile,
     debugCurrentNotebookCell,
+    definitionLocationForHover,
     documentAnalysisContext,
+    GapDefinitionProvider,
     GapSemanticTokensProvider,
     gapInlineValuesForDocument,
     groupEntries,
