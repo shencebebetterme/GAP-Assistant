@@ -173,6 +173,36 @@ try {
     "C:\\GAP\\pkg\\digraphs\\doc\\chap2.html",
     "package manual links should resolve under the configured GAP installation"
   );
+  assert.strictEqual(
+    extension.__test.onlineManualUrl({
+      file: "chap2.html",
+      manualId: "ref",
+      manualRelativePath: "doc/ref",
+      anchor: "X87C1BFB2826488B0"
+    }),
+    "https://docs.gap-system.org/doc/ref/chap2.html#X87C1BFB2826488B0",
+    "reference manual hover links should open the online GAP documentation"
+  );
+  assert.strictEqual(
+    extension.__test.onlineManualUrl({
+      file: "chap9.html",
+      manualId: "pkg:digraphs",
+      manualRelativePath: "pkg/digraphs/doc",
+      anchor: "X81FB5BE27903EC32"
+    }),
+    "https://docs.gap-system.org/pkg/digraphs/doc/chap9.html#X81FB5BE27903EC32",
+    "GAPDoc package manual hover links should open online package documentation"
+  );
+  assert.strictEqual(
+    extension.__test.onlineManualUrl({
+      file: "CHAP001.htm",
+      manualId: "pkg:ace",
+      manualRelativePath: "pkg/ace/htm",
+      anchor: "SSEC002.1"
+    }),
+    "https://docs.gap-system.org/pkg/ace/htm/CHAP001.htm#SSEC002.1",
+    "legacy package manual hover links should open online package documentation"
+  );
 
   const inlineDocument = testDocument(`G := SymmetricGroup(4);
 person := rec(

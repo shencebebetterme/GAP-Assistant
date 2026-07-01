@@ -14,6 +14,7 @@ const { parseGapSource } = require("../server/parser");
 
 const GAP_SELECTOR = { language: "gap" };
 const IDENTIFIER_PATTERN = /[A-Za-z_][A-Za-z0-9_]*/;
+const GAP_ONLINE_DOCS_BASE_URL = "https://docs.gap-system.org/";
 const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(["function"], []);
 let activeLanguageServerClient;
 let activeDebugOutputChannel;
@@ -446,7 +447,7 @@ class GapHoverProvider {
         appendWrappedText(markdown, truncate(group.entry.description, maxDescriptionLength), wrapColumn);
       }
 
-      markdown.appendMarkdown(`[$(book) Open full local GAP documentation](${manualCommandUri(group.entry)})`);
+      markdown.appendMarkdown(`[$(book) Open online GAP documentation](${onlineManualUrl(group.entry)})`);
 
       if (index < shownEntryGroups.length - 1) {
         markdown.appendMarkdown("\n\n---\n\n");
@@ -850,6 +851,18 @@ function manualCommandUri(entry) {
     ])
   );
   return `command:gapReference.openLocalManual?${payload}`;
+}
+
+function onlineManualUrl(entry = {}) {
+  const manualRelativePath = normalizeManualRelativePath(entry.manualRelativePath) || "doc/ref";
+  const pathSegments = manualRelativePath.split("/").filter(Boolean);
+  if (entry.file) {
+    pathSegments.push(entry.file);
+  }
+
+  const pathUrl = pathSegments.map(encodeURIComponent).join("/");
+  const anchor = entry.anchor ? `#${encodeURIComponent(entry.anchor)}` : "";
+  return `${GAP_ONLINE_DOCS_BASE_URL}${pathUrl}${anchor}`;
 }
 
 function groupEntries(entries = []) {
@@ -1451,6 +1464,7 @@ module.exports = {
     groupEntries,
     notebookCellFileBaseName,
     notebookCellSourceName,
+    onlineManualUrl,
     previousGapNotebookCellsText,
     normalizeRuntimeErrorEvent,
     resolveManualFilePath,
