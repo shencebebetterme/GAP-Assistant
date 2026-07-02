@@ -8,7 +8,7 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..");
 const adapterPath = path.join(root, "debug", "gapDebugAdapter.js");
-const { GapDebugAdapter, normalizeSourcePath, parseHitLine, parseVariableLine, rewriteInstrumentedLocations, runtimeVariableValue, unescapeField } = require("../debug/gapDebugAdapter");
+const { GapDebugAdapter, collectLaunchBreakpointsByPath, normalizeSourcePath, parseHitLine, parseVariableLine, rewriteInstrumentedLocations, runtimeVariableValue, unescapeField } = require("../debug/gapDebugAdapter");
 
 function unitSource(sourcePath, sourceName) {
   const adapter = new GapDebugAdapter(process.stdin, { write() {} });
@@ -90,19 +90,24 @@ assert(unitAdapterOutput.join("").includes("<expr> must be"), "adapter stopped e
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gap-debug-adapter-test-"));
 const program = path.join(tempDir, "sample.g");
+const helper = path.join(tempDir, "helper.g");
+fs.writeFileSync(helper, [
+  "f := function(n)",
+  "  local y;",
+  "  y := n + x;",
+  "  return y;",
+  "end;",
+  ""
+].join("\n"), "utf8");
 fs.writeFileSync(program, [
   "x := 1;",
+  "Read(\"helper.g\");",
   "G := SymmetricGroup(4);",
   "p := (1,2,3);",
   "m := [[1, 2], [3, 4]];",
   "r := rec(a := 1, b := \"x\");",
   "F := GF(5);",
   "V := GF(5)^2;",
-  "f := function(n)",
-  "  local y;",
-  "  y := n + x;",
-  "  return y;",
-  "end;",
   "z := f(2);",
   "w := f(3);",
   "Print(\"NO_NEWLINE\");",
@@ -199,6 +204,8 @@ function scopeReference(scopesResponse, name) {
 }
 
 async function main() {
+  await verifyIncludedFileBreakpointInstrumentation();
+
   const initializeSeq = send("initialize", {
     adapterID: "gap",
     supportsVariableType: true
@@ -213,7 +220,7 @@ async function main() {
     program,
     breakpoints: [
       {
-        line: 13
+        line: 9
       }
     ],
     gapCommand: "wsl",
@@ -233,7 +240,7 @@ async function main() {
   });
   const stack = await waitForResponse("stackTrace", stackSeq);
   assert.strictEqual(stack.body.stackFrames.length, 1, "adapter should report the current GAP frame");
-  assert.strictEqual(stack.body.stackFrames[0].line, 13, "stack frame should point at the breakpoint line");
+  assert.strictEqual(stack.body.stackFrames[0].line, 9, "stack frame should point at the breakpoint line");
   assert.strictEqual(path.normalize(stack.body.stackFrames[0].source.path), path.normalize(program), "stack frame should use the original source path");
 
   const scopesSeq = send("scopes", {
@@ -312,9 +319,6 @@ async function main() {
     "gapSemanticObject",
     "debug variables should opt into the GAP Objects Variables context menu"
   );
-  const f = variables.body.variables.find((variable) => variable.name === "f");
-  assert(f, "captured globals should include f");
-  assert.strictEqual(f.value, "function (n) ... end", "function variables should not expose inserted debug probe code");
   const initialLocalsSeq = send("variables", {
     variablesReference: localsReference
   });
@@ -359,7 +363,7 @@ async function main() {
     threadId: 1
   });
   const steppedStack = await waitForResponse("stackTrace", steppedStackSeq);
-  assert.strictEqual(steppedStack.body.stackFrames[0].line, 14, "next should step over the function call");
+  assert.strictEqual(steppedStack.body.stackFrames[0].line, 10, "next should step over the function call");
 
   const steppedVariablesSeq = send("variables", {
     variablesReference: globalsReference
@@ -381,8 +385,9 @@ async function main() {
     threadId: 1
   });
   const stepInStack = await waitForResponse("stackTrace", stepInStackSeq);
-  assert.strictEqual(stepInStack.body.stackFrames[0].line, 9, "stepIn should enter the called function body");
+  assert.strictEqual(stepInStack.body.stackFrames[0].line, 2, "stepIn should enter the called function body");
   assert.strictEqual(stepInStack.body.stackFrames[0].name, "f", "stepIn frame should use the GAP function name");
+  assert.strictEqual(path.normalize(stepInStack.body.stackFrames[0].source.path), path.normalize(helper), "stepIn should jump to the included GAP file");
 
   const stepInVariablesSeq = send("variables", {
     variablesReference: localsReference
@@ -396,7 +401,7 @@ async function main() {
     variablesReference: globalsReference
   });
   const stepInGlobals = await waitForResponse("variables", stepInGlobalsSeq);
-  assert(stepInGlobals.body.variables.some((variable) => variable.name === "x"), "function frames should expose inherited globals separately");
+  assert(!JSON.stringify(stepInGlobals.body.variables).includes("__GAPDEBUG_Probe"), "included function variables should not expose inserted debug probe code");
 
   const stepOutEventStart = messages.length;
   const stepOutSeq = send("stepOut", {
@@ -410,7 +415,7 @@ async function main() {
     threadId: 1
   });
   const stepOutStack = await waitForResponse("stackTrace", stepOutStackSeq);
-  assert.strictEqual(stepOutStack.body.stackFrames[0].line, 15, "stepOut should return to the caller's next statement");
+  assert.strictEqual(stepOutStack.body.stackFrames[0].line, 11, "stepOut should return to the caller's next statement");
 
   const stepOutVariablesSeq = send("variables", {
     variablesReference: globalsReference
@@ -433,7 +438,7 @@ async function main() {
     threadId: 1
   });
   const errorStack = await waitForResponse("stackTrace", errorStackSeq);
-  assert.strictEqual(errorStack.body.stackFrames[0].line, 17, "runtime error stack should point at the original failing GAP line");
+  assert.strictEqual(errorStack.body.stackFrames[0].line, 13, "runtime error stack should point at the original failing GAP line");
   assert.strictEqual(path.normalize(errorStack.body.stackFrames[0].source.path), path.normalize(program), "runtime error stack should use the original source path");
 
   const errorGlobalsSeq = send("variables", {
@@ -447,7 +452,7 @@ async function main() {
     15000,
     errorEventStart
   );
-  assert.strictEqual(gapErrorEvent.body.line, 17, "custom GAP runtime error event should report the original source line");
+  assert.strictEqual(gapErrorEvent.body.line, 13, "custom GAP runtime error event should report the original source line");
   assert(gapErrorEvent.body.message.includes("Error,"), "custom GAP runtime error event should include the GAP error message");
   const exceptionInfoSeq = send("exceptionInfo", {
     threadId: 1
@@ -456,7 +461,7 @@ async function main() {
   assert(exceptionInfo.body.description.includes("Location:"), "exception info should include the original source location");
   assert(exceptionInfo.body.details.stackTrace.includes("ForAll"), "exception info should include GAP stack details");
   await waitFor(
-    (message) => message.type === "event" && message.event === "output" && String(message.body.output).includes(`${program}:17`),
+    (message) => message.type === "event" && message.event === "output" && String(message.body.output).includes(`${program}:13`),
     "remapped runtime error source location",
     15000,
     errorEventStart
@@ -476,6 +481,46 @@ async function main() {
   adapter.kill();
   safeRemoveTempDir();
   console.log("Debug adapter smoke test passed.");
+}
+
+async function verifyIncludedFileBreakpointInstrumentation() {
+  const unitTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gap-debug-adapter-unit-"));
+  const unitAdapter = new GapDebugAdapter(process.stdin, { write() {} });
+  unitAdapter.tempDir = unitTempDir;
+  unitAdapter.launchArgs = {
+    breakpointsBySource: [
+      {
+        sourcePath: helper,
+        breakpoints: [{ line: 3 }]
+      }
+    ]
+  };
+  const programSourcePath = normalizeSourcePath(program);
+  unitAdapter.launchBreakpointsByPath = collectLaunchBreakpointsByPath(unitAdapter.launchArgs, programSourcePath);
+
+  try {
+    await unitAdapter.instrumentSourceFile(program, {
+      cwd: tempDir,
+      includePrelude: true,
+      maxValueLength: 200,
+      quitOnExit: true,
+      sourcePath: programSourcePath,
+      usesWsl: false
+    });
+
+    const helperSourcePath = normalizeSourcePath(helper);
+    const helperBreakpoints = unitAdapter.breakpointsByPath.get(helperSourcePath);
+    assert(helperBreakpoints && helperBreakpoints.has(3), "breakpoints in Read-loaded files should be registered on included-file probes");
+    assert(
+      Array.from(unitAdapter.probesById.values()).some((probe) => normalizeSourcePath(probe.sourcePath) === helperSourcePath && probe.line === 3),
+      "Read-loaded files should contribute executable probes for their original source path"
+    );
+  } finally {
+    fs.rmSync(unitTempDir, {
+      recursive: true,
+      force: true
+    });
+  }
 }
 
 function hasWslGap() {

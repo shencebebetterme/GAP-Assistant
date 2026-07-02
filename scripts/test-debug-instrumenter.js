@@ -67,6 +67,15 @@ assert.strictEqual(
   "runtime preludes should not shift original source line mapping"
 );
 
+const librarySource = instrumentGapSource("helper := 1;\n", path.join(process.cwd(), "examples", "helper.g"), {
+  includePrelude: false,
+  probeIdStart: 40,
+  quitOnExit: false
+});
+assert(!librarySource.instrumented.includes("__GAPDEBUG_MaxValueLength"), "included debug files should not repeat the debug prelude");
+assert(!librarySource.instrumented.includes("QUIT;"), "included debug files should not quit the GAP session after Read");
+assert.strictEqual(librarySource.probes[0].id, 40, "included debug probes should accept a global id offset");
+
 console.log("Debug instrumenter tests passed.");
 
 function variableNames(probe) {

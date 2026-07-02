@@ -7,7 +7,12 @@ const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 function instrumentGapSource(text, sourcePath, options = {}) {
   const lineStarts = computeLineStarts(text);
   const ast = parseGapSource(text);
-  const probes = collectProbeMetadata(text, sourcePath, ast, lineStarts);
+  const probeIdStart = Number.isInteger(options.probeIdStart) && options.probeIdStart > 0 ? options.probeIdStart : 1;
+  const probes = collectProbeMetadata(text, sourcePath, ast, lineStarts)
+    .map((probe, index) => ({
+      ...probe,
+      id: probeIdStart + index
+    }));
   const runtimePrelude = normalizeRuntimePrelude(options.runtimePrelude);
   const insertions = probes.map((probe) => ({
     offset: probe.offset,
@@ -15,15 +20,18 @@ function instrumentGapSource(text, sourcePath, options = {}) {
     probe
   }));
 
-  const prelude = gapDebugPrelude(options);
+  const prelude = options.includePrelude === false ? "" : gapDebugPrelude(options);
   const instrumented = applyInsertions(text, insertions);
+  const quitOnExit = options.quitOnExit !== false;
   return {
     ast,
     lineStarts,
     probes,
     prelude,
-    lineMap: buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions, runtimePrelude),
-    instrumented: `${prelude}\n${runtimePrelude ? `${runtimePrelude}\n` : ""}${instrumented}\nQUIT;\n`
+    lineMap: buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions, runtimePrelude, {
+      quitOnExit
+    }),
+    instrumented: instrumentedSourceText(prelude, runtimePrelude, instrumented, quitOnExit)
   };
 }
 
@@ -209,7 +217,7 @@ function applyInsertions(text, insertions) {
   return result;
 }
 
-function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions, runtimePrelude = "") {
+function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, insertions, runtimePrelude = "", options = {}) {
   const lineMap = [];
   let generatedLine = 1;
 
@@ -239,8 +247,10 @@ function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, inserti
     });
   };
 
-  appendText(prelude);
-  appendText("\n");
+  if (prelude) {
+    appendText(prelude);
+    appendText("\n");
+  }
   if (runtimePrelude) {
     appendText(runtimePrelude);
     appendText("\n");
@@ -258,9 +268,22 @@ function buildInstrumentedLineMap(text, sourcePath, lineStarts, prelude, inserti
   }
 
   appendOriginal(offset, text.length);
-  appendText("\nQUIT;\n");
+  appendText(options.quitOnExit === false ? "\n" : "\nQUIT;\n");
 
   return lineMap;
+}
+
+function instrumentedSourceText(prelude, runtimePrelude, source, quitOnExit) {
+  const chunks = [];
+  if (prelude) {
+    chunks.push(prelude);
+  }
+  if (runtimePrelude) {
+    chunks.push(runtimePrelude);
+  }
+  chunks.push(source);
+  const suffix = quitOnExit ? "QUIT;\n" : "";
+  return `${chunks.join("\n")}\n${suffix}`;
 }
 
 function normalizeRuntimePrelude(value) {

@@ -5,6 +5,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { collectProbeMetadata, instrumentGapSource } = require("./instrumenter");
+const { findReadIncludes } = require("../server/includes");
+const { parseGapSource } = require("../server/parser");
 
 const THREAD_ID = 1;
 const LOCALS_REFERENCE = 1;
@@ -22,6 +24,7 @@ class GapDebugAdapter {
     this.launchArgs = undefined;
     this.configurationDone = false;
     this.breakpointsByPath = new Map();
+    this.launchBreakpointsByPath = new Map();
     this.probesByPath = new Map();
     this.probesById = new Map();
     this.runtime = undefined;
@@ -36,6 +39,10 @@ class GapDebugAdapter {
     this.instrumentedPath = undefined;
     this.instrumentedRuntimePath = undefined;
     this.instrumentedLineMap = [];
+    this.instrumentedLocationMaps = [];
+    this.instrumentedFilesByPath = new Map();
+    this.nextInstrumentedFileIndex = 0;
+    this.nextProbeId = 1;
     this.sourceTextByPath = new Map();
     this.sourceNameByPath = new Map();
     this.temporaryProgramDirectory = undefined;
@@ -259,33 +266,28 @@ class GapDebugAdapter {
       throw new Error("GAP debug launch requires a program path.");
     }
 
-    const source = fs.readFileSync(program, "utf8");
     const sourcePath = normalizeSourcePath(this.launchArgs.sourcePath || program);
-    const sourceName = this.launchArgs.sourceName ? String(this.launchArgs.sourceName) : undefined;
-    this.sourceTextByPath.set(sourcePath, source);
-    if (sourceName) {
-      this.sourceNameByPath.set(sourcePath, sourceName);
-    }
     this.temporaryProgramDirectory = normalizePath(this.launchArgs.temporaryProgramDirectory);
-
-    const instrumented = instrumentGapSource(source, sourcePath, {
-      maxValueLength: this.launchArgs.maxValueLength,
-      runtimePrelude: this.launchArgs.runtimePrelude
-    });
-    this.probesByPath.set(sourcePath, instrumented.probes);
-    this.probesById = new Map(instrumented.probes.map((probe) => [probe.id, probe]));
-    this.instrumentedLineMap = instrumented.lineMap || [];
-    this.applyLaunchBreakpoints(sourcePath, this.launchArgs.breakpoints);
-
     this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gap-debug-"));
-    const instrumentedPath = path.join(this.tempDir, `${path.basename(program)}.debug.g`);
-    this.instrumentedPath = instrumentedPath;
-    fs.writeFileSync(instrumentedPath, instrumented.instrumented, "utf8");
 
     const command = this.launchArgs.gapCommand || defaultGapCommand();
     const configuredArgs = arrayValue(this.launchArgs.gapArgs);
     const args = configuredArgs.length > 0 ? configuredArgs : defaultGapArgs(command);
-    this.instrumentedRuntimePath = commandUsesWsl(command, args) ? await windowsPathToWslPath(instrumentedPath) : instrumentedPath;
+    const usesWsl = commandUsesWsl(command, args);
+    this.launchBreakpointsByPath = collectLaunchBreakpointsByPath(this.launchArgs, sourcePath);
+    const instrumentedProgram = await this.instrumentSourceFile(program, {
+      sourcePath,
+      sourceName: this.launchArgs.sourceName ? String(this.launchArgs.sourceName) : undefined,
+      cwd: normalizePath(this.launchArgs.cwd) || path.dirname(program),
+      includePrelude: true,
+      maxValueLength: this.launchArgs.maxValueLength,
+      quitOnExit: true,
+      runtimePrelude: this.launchArgs.runtimePrelude,
+      usesWsl
+    });
+    this.instrumentedPath = instrumentedProgram.instrumentedPath;
+    this.instrumentedRuntimePath = instrumentedProgram.runtimePath;
+    this.instrumentedLineMap = instrumentedProgram.lineMap || [];
     args.push(this.instrumentedRuntimePath);
 
     this.runtime = childProcess.spawn(command, args, {
@@ -303,6 +305,103 @@ class GapDebugAdapter {
       this.sendEvent("terminated");
       this.cleanupTempDir();
     });
+  }
+
+  async instrumentSourceFile(filePath, options = {}) {
+    const normalizedFilePath = normalizePath(filePath);
+    const cacheKey = normalizePathKey(normalizedFilePath);
+    const cached = this.instrumentedFilesByPath.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const sourcePath = normalizeSourcePath(options.sourcePath || normalizedFilePath);
+    const instrumentedPath = this.createInstrumentedFilePath(normalizedFilePath);
+    const runtimePath = options.usesWsl ? await windowsPathToWslPath(instrumentedPath) : instrumentedPath;
+    const entry = {
+      instrumentedPath,
+      lineMap: [],
+      runtimePath,
+      sourcePath
+    };
+    this.instrumentedFilesByPath.set(cacheKey, entry);
+
+    const source = fs.readFileSync(normalizedFilePath, "utf8");
+    this.sourceTextByPath.set(sourcePath, source);
+    if (options.sourceName) {
+      this.sourceNameByPath.set(sourcePath, options.sourceName);
+    }
+
+    const rewrittenSource = await this.rewriteStaticReadIncludes(source, normalizedFilePath, options);
+    const instrumented = instrumentGapSource(rewrittenSource, sourcePath, {
+      includePrelude: options.includePrelude,
+      maxValueLength: options.maxValueLength,
+      probeIdStart: this.nextProbeId,
+      quitOnExit: options.quitOnExit,
+      runtimePrelude: options.runtimePrelude
+    });
+    this.nextProbeId += instrumented.probes.length;
+    this.registerInstrumentedSource(sourcePath, instrumentedPath, runtimePath, instrumented);
+    fs.writeFileSync(instrumentedPath, instrumented.instrumented, "utf8");
+
+    entry.lineMap = instrumented.lineMap || [];
+    entry.probes = instrumented.probes;
+    return entry;
+  }
+
+  createInstrumentedFilePath(filePath) {
+    const index = this.nextInstrumentedFileIndex;
+    this.nextInstrumentedFileIndex += 1;
+    const basename = (path.basename(filePath) || "source.g").replace(/[^A-Za-z0-9_.-]+/g, "_");
+    const suffix = index === 0 ? "" : `.${index}`;
+    return path.join(this.tempDir, `${basename}${suffix}.debug.g`);
+  }
+
+  async rewriteStaticReadIncludes(source, fromFilePath, options = {}) {
+    let includes;
+    try {
+      includes = findReadIncludes(parseGapSource(source));
+    } catch (_) {
+      return source;
+    }
+    if (includes.length === 0) {
+      return source;
+    }
+
+    const replacements = [];
+    for (const include of includes) {
+      const resolvedPath = resolveReadIncludePath(include.path, fromFilePath, options.cwd);
+      if (!resolvedPath) {
+        continue;
+      }
+
+      const instrumentedInclude = await this.instrumentSourceFile(resolvedPath, {
+        cwd: options.cwd,
+        includePrelude: false,
+        maxValueLength: options.maxValueLength,
+        quitOnExit: false,
+        usesWsl: options.usesWsl
+      });
+      replacements.push({
+        start: include.start,
+        end: include.end,
+        text: gapStringLiteral(instrumentedInclude.runtimePath)
+      });
+    }
+
+    return applyTextReplacements(source, replacements);
+  }
+
+  registerInstrumentedSource(sourcePath, instrumentedPath, runtimePath, instrumented) {
+    this.probesByPath.set(sourcePath, instrumented.probes);
+    for (const probe of instrumented.probes) {
+      this.probesById.set(probe.id, probe);
+    }
+    this.instrumentedLocationMaps.push({
+      paths: [runtimePath, instrumentedPath],
+      lineMap: instrumented.lineMap || []
+    });
+    this.applyLaunchBreakpoints(sourcePath, this.launchBreakpointsByPath.get(normalizeSourcePath(sourcePath)));
   }
 
   handleRuntimeOutput(chunk) {
@@ -415,7 +514,13 @@ class GapDebugAdapter {
   }
 
   rewriteRuntimeOutput(output) {
-    return rewriteInstrumentedLocations(output, [this.instrumentedRuntimePath, this.instrumentedPath], this.instrumentedLineMap);
+    const maps = this.instrumentedLocationMaps.length > 0
+      ? this.instrumentedLocationMaps
+      : [{ paths: [this.instrumentedRuntimePath, this.instrumentedPath], lineMap: this.instrumentedLineMap }];
+    return maps.reduce(
+      (rewritten, entry) => rewriteInstrumentedLocations(rewritten, entry.paths, entry.lineMap),
+      String(output || "")
+    );
   }
 
   observeRuntimeOutputForError(text) {
@@ -1245,6 +1350,100 @@ function arrayValue(value) {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
+function collectLaunchBreakpointsByPath(launchArgs, entrySourcePath) {
+  const grouped = new Map();
+  addLaunchBreakpoints(grouped, entrySourcePath, launchArgs && launchArgs.breakpoints);
+
+  for (const entry of (launchArgs && Array.isArray(launchArgs.breakpointsBySource) ? launchArgs.breakpointsBySource : [])) {
+    addLaunchBreakpoints(grouped, entry.sourcePath || entry.path || entry.uri, entry.breakpoints);
+  }
+
+  return grouped;
+}
+
+function addLaunchBreakpoints(grouped, sourcePath, breakpoints) {
+  const key = normalizeSourcePath(sourcePath);
+  if (!key || !Array.isArray(breakpoints) || breakpoints.length === 0) {
+    return;
+  }
+  const existing = grouped.get(key) || [];
+  existing.push(...breakpoints);
+  grouped.set(key, existing);
+}
+
+function resolveReadIncludePath(includePath, fromFilePath, cwd) {
+  const includeText = typeof includePath === "string" ? includePath.trim() : "";
+  if (!includeText || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(includeText) && !/^[A-Za-z]:[\\/]/.test(includeText)) {
+    return undefined;
+  }
+
+  const normalizedInclude = path.normalize(includeText);
+  const candidates = [];
+  if (path.isAbsolute(normalizedInclude)) {
+    candidates.push(normalizedInclude);
+  }
+  if (fromFilePath) {
+    candidates.push(path.resolve(path.dirname(fromFilePath), normalizedInclude));
+  }
+  if (cwd) {
+    candidates.push(path.resolve(cwd, normalizedInclude));
+  }
+  candidates.push(path.resolve(process.cwd(), normalizedInclude));
+
+  for (const candidate of uniqueNormalizedPaths(candidates)) {
+    try {
+      if (fs.statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch (_) {
+      // Try the next candidate.
+    }
+  }
+  return undefined;
+}
+
+function uniqueNormalizedPaths(paths) {
+  const seen = new Set();
+  const result = [];
+  for (const filePath of paths) {
+    const key = normalizePathKey(filePath);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(path.resolve(filePath));
+  }
+  return result;
+}
+
+function normalizePathKey(filePath) {
+  if (typeof filePath !== "string" || filePath.trim() === "") {
+    return "";
+  }
+  const resolved = path.resolve(filePath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function applyTextReplacements(text, replacements) {
+  return [...(replacements || [])]
+    .sort((left, right) => right.start - left.start)
+    .reduce((result, replacement) => {
+      if (!Number.isInteger(replacement.start) || !Number.isInteger(replacement.end) || replacement.start > replacement.end) {
+        return result;
+      }
+      return `${result.slice(0, replacement.start)}${replacement.text}${result.slice(replacement.end)}`;
+    }, text);
+}
+
+function gapStringLiteral(value) {
+  return `"${String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, "\\\"")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t")}"`;
+}
+
 async function windowsPathToWslPath(filePath) {
   const normalized = filePath.replace(/\\/g, "/");
   return new Promise((resolve, reject) => {
@@ -1266,9 +1465,12 @@ if (require.main === module) {
 
 module.exports = {
   GapDebugAdapter,
+  collectLaunchBreakpointsByPath,
+  gapStringLiteral,
   normalizeSourcePath,
   parseHitLine,
   parseVariableLine,
+  resolveReadIncludePath,
   rewriteInstrumentedLocations,
   runtimeVariableValue,
   unescapeField

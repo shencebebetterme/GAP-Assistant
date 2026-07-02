@@ -133,6 +133,14 @@
                 },
                 "default": [],
                 "description": "Internal breakpoint handoff used by GAP: Debug Current File."
+              },
+              "breakpointsBySource": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "default": [],
+                "description": "Internal grouped breakpoint handoff for GAP files loaded by Read(...)."
               }
             }
           }

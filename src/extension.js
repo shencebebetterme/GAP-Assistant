@@ -1117,18 +1117,20 @@ async function debugCurrentFile(resource, outputChannel = activeDebugOutputChann
   }
 
   const breakpoints = currentFileBreakpoints(uri);
+  const breakpointsBySource = allGapFileBreakpoints();
   const configuration = {
     type: "gap",
     request: "launch",
     name: "Debug GAP File",
     program: uri.fsPath,
     breakpoints,
+    breakpointsBySource,
     stopOnEntry: false
   };
 
   if (outputChannel) {
     outputChannel.appendLine(`Starting GAP debug session for ${uri.fsPath}`);
-    outputChannel.appendLine(`Captured ${breakpoints.length} breakpoint(s) for this file.`);
+    outputChannel.appendLine(`Captured ${countGroupedBreakpoints(breakpointsBySource)} GAP file breakpoint(s).`);
   }
 
   try {
@@ -1167,6 +1169,7 @@ async function debugCurrentNotebookCell(resource, outputChannel = activeDebugOut
   await fs.promises.writeFile(program, text, "utf8");
 
   const breakpoints = currentFileBreakpoints(cell.document.uri);
+  const breakpointsBySource = allGapFileBreakpoints();
   const notebookUri = cell.notebook && cell.notebook.uri;
   const configuration = {
     type: "gap",
@@ -1179,12 +1182,13 @@ async function debugCurrentNotebookCell(resource, outputChannel = activeDebugOut
     temporaryProgramDirectory: tempDir,
     runtimePrelude: previousGapNotebookCellsText(cell),
     breakpoints,
+    breakpointsBySource,
     stopOnEntry: breakpoints.length === 0
   };
 
   if (outputChannel) {
     outputChannel.appendLine(`Starting GAP debug session for notebook cell ${configuration.sourceName}`);
-    outputChannel.appendLine(`Captured ${breakpoints.length} breakpoint(s) for this cell.`);
+    outputChannel.appendLine(`Captured ${breakpoints.length} breakpoint(s) for this cell and ${countGroupedBreakpoints(breakpointsBySource)} GAP file breakpoint(s).`);
   }
 
   try {
@@ -1354,6 +1358,41 @@ function currentFileBreakpoints(uri) {
     }));
 }
 
+function allGapFileBreakpoints() {
+  const grouped = new Map();
+  for (const breakpoint of vscode.debug.breakpoints || []) {
+    if (breakpoint.enabled === false || !breakpoint.location || !breakpoint.location.uri) {
+      continue;
+    }
+
+    const uri = breakpoint.location.uri;
+    if (!uri.fsPath || !isGapSourceFilePath(uri.fsPath)) {
+      continue;
+    }
+
+    const key = uri.fsPath;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        sourcePath: key,
+        breakpoints: []
+      });
+    }
+    grouped.get(key).breakpoints.push({
+      line: breakpoint.location.range.start.line + 1,
+      column: breakpoint.location.range.start.character + 1
+    });
+  }
+  return Array.from(grouped.values());
+}
+
+function isGapSourceFilePath(filePath) {
+  return /\.(g|gap|gd|gi|tst)$/i.test(String(filePath || ""));
+}
+
+function countGroupedBreakpoints(groups) {
+  return (groups || []).reduce((count, group) => count + (Array.isArray(group.breakpoints) ? group.breakpoints.length : 0), 0);
+}
+
 function resolveManualFilePath(config, docs, target) {
   const manualPath = resolveEntryManualPath(config, docs, target);
   return manualPath ? path.join(manualPath, target.file) : undefined;
@@ -1453,6 +1492,8 @@ function truncate(text, maxLength) {
 
 module.exports = {
   __test: {
+    allGapFileBreakpoints,
+    countGroupedBreakpoints,
     currentFileBreakpoints,
     debugCurrentFile,
     debugCurrentNotebookCell,
