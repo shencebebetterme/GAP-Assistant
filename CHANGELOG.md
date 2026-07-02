@@ -1,9 +1,12 @@
 # Changelog
 
+## 0.5.7
+
+- Fixed debugging through static `Read("...")` calls so breakpoints and Step Into work in loaded GAP source files.
+
 ## 0.5.6
 
 - Changed hover documentation links for GAP system and package functions to open the online GAP documentation.
-- Fixed debugging through static `Read("...")` calls so breakpoints and Step Into work in loaded GAP source files.
 
 ## 0.5.5
 
